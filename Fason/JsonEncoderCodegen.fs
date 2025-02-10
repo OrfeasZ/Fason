@@ -14,18 +14,32 @@ type JsonEncoderCodegen =
     static member private getTypeName(typ: SerializableType ref) =
         match typ.Value with
         | SerializableType.Basic b -> b.typeName
-        | SerializableType.AnonymousRecord r -> %($$"""{| todo: string |}""") // TODO
+        | SerializableType.AnonymousRecord r ->
+            let fields =
+                r.fields
+                |> List.map (fun f -> %($"{f.name}: {f.fieldType |> JsonEncoderCodegen.getTypeName}"))
+                |> String.concat "; "
+
+            %("{| " + fields + " |}")
+
         | SerializableType.Record r -> r.name
         | SerializableType.Union u -> u.name
         | SerializableType.Enum e -> e.name
-        | SerializableType.Tuple t -> %($$"""string * int""") // TODO
+        | SerializableType.Tuple t ->
+            t.values
+            |> List.map (fun t -> t.valueType |> JsonEncoderCodegen.getTypeName |> string)
+            |> String.concat " * "
+            |> (fun s -> %s)
+
         | SerializableType.Array a -> %($"{a |> JsonEncoderCodegen.getTypeName} array")
         | SerializableType.List l -> %($"{l |> JsonEncoderCodegen.getTypeName} list")
         | SerializableType.Set s -> %($"Set<{s |> JsonEncoderCodegen.getTypeName}>")
         | SerializableType.Map(k, v) ->
             %($"Map<{k |> JsonEncoderCodegen.getTypeName}, {v |> JsonEncoderCodegen.getTypeName}>")
+
         | SerializableType.UnitOfMeasure uom ->
             %($"{uom.baseType |> JsonEncoderCodegen.getTypeName}<{uom.unitOfMeasure}>")
+
         | SerializableType.Optional o -> %($"{o |> JsonEncoderCodegen.getTypeName} option")
 
     static member private generateType(typ: SerializableType ref) =
