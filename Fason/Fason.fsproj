@@ -2,17 +2,25 @@
 
     <PropertyGroup>
         <OutputType>Exe</OutputType>
-        <TargetFramework>net8.0</TargetFramework>
+        <TargetFramework>net9.0</TargetFramework>
     </PropertyGroup>
 
     <ItemGroup>
+        <Compile Include="TypeCollector.fs"/>
+        <Compile Include="JsonEncoderCodegen.fs"/>
         <Compile Include="Program.fs"/>
     </ItemGroup>
 
     <ItemGroup>
-      <PackageReference Include="Ionide.ProjInfo" Version="0.68.0" />
-      <PackageReference Include="Ionide.ProjInfo.FCS" Version="0.68.0" />
-      <PackageReference Remove="FSharp.Core" />
+        <PackageReference Include="Fabulous.AST" Version="1.1.0"/>
+        <PackageReference Include="FSharp.UMX" Version="1.1.0"/>
+        <PackageReference Include="Ionide.ProjInfo" Version="0.68.0"/>
+        <PackageReference Include="Ionide.ProjInfo.FCS" Version="0.68.0"/>
+        <PackageReference Remove="FSharp.Core"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\Fason.Lib\Fason.Lib.fsproj"/>
     </ItemGroup>
 
 </Project>

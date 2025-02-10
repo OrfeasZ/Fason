@@ -9,4 +9,12 @@
         <Compile Include="Library.fs"/>
     </ItemGroup>
 
+    <ItemGroup>
+      <ProjectReference Include="..\Fason.Lib\Fason.Lib.fsproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <PackageReference Include="FSharp.UMX" Version="1.1.0" />
+    </ItemGroup>
+
 </Project>
