@@ -1,9 +1,34 @@
 namespace Fason
 
+open System.IO
+open System.Text
 open Fason.TypeCollector
 open Fabulous.AST
 open type Fabulous.AST.Ast
 open FSharp.UMX
+
+[<AutoOpen>]
+module AstHelpers =
+    // TODO: Send this as PR (new EscapedString builder) to Fabulous.AST.
+    let EscapedString (value: string) =
+        let sb =
+            value.ToCharArray()
+            |> Seq.fold
+                (fun (sb: StringBuilder) (c: char) ->
+                    match c with
+                    | '\n'
+                    | '\u2028'
+                    | '\u2028' -> sb.Append("\\n")
+                    | '\r' -> sb.Append("\\r")
+                    | '\t' -> sb.Append("\\t")
+                    | '\'' -> sb.Append("\\'")
+                    | '\\' -> sb.Append("\\\\")
+                    | '"' -> sb.Append("\\\"")
+                    | '\u0000' -> sb.Append("\\0")
+                    | _ -> sb.Append(c))
+                (StringBuilder())
+
+        sb.ToString() |> String
 
 type JsonEncoderCodegen =
     static member private generateBasicEncoder(b: BasicType) =
@@ -42,13 +67,169 @@ type JsonEncoderCodegen =
 
         | SerializableType.Optional o -> %($"{o |> JsonEncoderCodegen.getTypeName} option")
 
-    static member private generateType(typ: SerializableType ref) =
-        let valueType, serializeExpr = JsonEncoderCodegen.getTypeName typ, ()
+    static member private jsonEncodeString(value: string) =
+        use writer = new StringWriter()
+        writer.Write("\"")
 
-        Member("serialize", ParenPat(ParameterPat("value", valueType.ToString())), String($"{valueType}"))
-            .toStatic ()
+        for character in value do
+            match character with
+            | '"' -> writer.Write("\\\"")
+            | '\\' -> writer.Write("\\\\")
+            | '/' -> writer.Write("\\/")
+            | '\b' -> writer.Write("\\b")
+            | '\f' -> writer.Write("\\f")
+            | '\n' -> writer.Write("\\n")
+            | '\r' -> writer.Write("\\r")
+            | '\t' -> writer.Write("\\t")
+            | c when c >= '\u0000' && c <= '\u001F' -> writer.Write($"\\u{character:X4}")
+            | c -> writer.Write(c)
 
-    static member private generateTypeDes(typ: SerializableType ref) =
+        writer.Write("\"")
+        writer.ToString()
+
+    static member private generateBasicSerializer(typ: BasicType) =
+        // Writer has overloads for all basic types, so we can just pass the value directly.
+        AppExpr("writer.Write", ParenExpr("value"))
+
+    static member private generateFieldSerializer(fields: RecordField list) =
+        [ for i, field in fields |> List.indexed do
+              // TODO: Depending on configuration, completely omit optional fields.
+              let prologue = if i > 0 then "," else ""
+
+              AppExpr("writer.WritePlain", EscapedString $"{prologue}{JsonEncoderCodegen.jsonEncodeString field.name}:")
+
+              let value =
+                  // If the field is a uom, we need to strip the uom type from the value.
+                  match field.fieldType.Value with
+                  | SerializableType.UnitOfMeasure _ -> $"%%value.{field.name}"
+                  | _ -> $"value.{field.name}"
+
+              AppExpr("JsonSerializer.serialize", ParenExpr(TupleExpr([ value; "writer" ]))) ]
+
+    static member private generateAnonymousRecordSerializer(typ: AnonymousRecordType) =
+        CompExprBodyExpr(
+            [ AppExpr("writer.WritePlain", EscapedString "{")
+              yield! JsonEncoderCodegen.generateFieldSerializer typ.fields
+              AppExpr("writer.WritePlain", EscapedString "}") ]
+        )
+
+    static member private generateRecordSerializer(typ: RecordType) =
+        CompExprBodyExpr(
+            [ AppExpr("writer.WritePlain", EscapedString "{")
+              yield! JsonEncoderCodegen.generateFieldSerializer typ.fields
+              AppExpr("writer.WritePlain", EscapedString "}") ]
+        )
+
+    static member private generateUnionSerializer(typ: UnionType) =
+        // TODO
+        CompExprBodyExpr [ AppExpr("writer.WritePlain", EscapedString "null") ]
+
+    static member private generateEnumSerializer(typ: EnumType) =
+        let baseTypeName =
+            SerializableType.Basic typ.valueType |> ref |> JsonEncoderCodegen.getTypeName
+
+        MatchExpr(
+            "value",
+            [ for value in typ.values do
+                  MatchClauseExpr(
+                      $"{typ.name}.{value.name}",
+                      AppExpr("writer.WritePlain", EscapedString $"\"{value.name}\"")
+                  )
+
+              MatchClauseExpr(
+                  "other",
+                  AppExpr("JsonSerializer.serialize", ParenExpr(TupleExpr([ $"{baseTypeName} other"; "writer" ])))
+              ) ]
+        )
+
+    static member private generateTupleSerializer(typ: TupleType) =
+        // TODO
+        CompExprBodyExpr [ AppExpr("writer.WritePlain", EscapedString "null") ]
+
+    static member private generateArraySerializer(typ: SerializableType ref) =
+        CompExprBodyExpr
+            [ AppExpr("writer.WritePlain", EscapedString "[")
+
+              ForEachDoExpr(
+                  "i, item",
+                  "value |> Seq.indexed",
+                  CompExprBodyExpr
+                      [ IfThenExpr("i > 0", AppExpr("writer.WritePlain", EscapedString ","))
+                        AppExpr("JsonSerializer.serialize", ParenExpr(TupleExpr([ "item"; "writer" ]))) ]
+              )
+
+              AppExpr("writer.WritePlain", EscapedString "]") ]
+
+    static member private generateListSerializer(typ: SerializableType ref) =
+        CompExprBodyExpr
+            [ AppExpr("writer.WritePlain", EscapedString "[")
+
+              ForEachDoExpr(
+                  "i, item",
+                  "value |> Seq.indexed",
+                  CompExprBodyExpr
+                      [ IfThenExpr("i > 0", AppExpr("writer.WritePlain", EscapedString ","))
+                        AppExpr("JsonSerializer.serialize", ParenExpr(TupleExpr([ "item"; "writer" ]))) ]
+              )
+
+              AppExpr("writer.WritePlain", EscapedString "]") ]
+
+    static member private generateSetSerializer(typ: SerializableType ref) =
+        CompExprBodyExpr
+            [ AppExpr("writer.WritePlain", EscapedString "[")
+
+              ForEachDoExpr(
+                  "i, item",
+                  "value |> Seq.indexed",
+                  CompExprBodyExpr
+                      [ IfThenExpr("i > 0", AppExpr("writer.WritePlain", EscapedString ","))
+                        AppExpr("JsonSerializer.serialize", ParenExpr(TupleExpr([ "item"; "writer" ]))) ]
+              )
+
+              AppExpr("writer.WritePlain", EscapedString "]") ]
+
+    static member private generateMapSerializer(keyType: SerializableType ref, valueType: SerializableType ref) =
+        // TODO
+        CompExprBodyExpr [ AppExpr("writer.WritePlain", EscapedString "null") ]
+
+    static member private generateUnitOfMeasureSerializer(typ: UomType) =
+        // TODO
+        CompExprBodyExpr [ AppExpr("writer.WritePlain", EscapedString "null") ]
+
+    static member private generateOptionalSerializer(typ: SerializableType ref) =
+        // TODO
+        CompExprBodyExpr [ AppExpr("writer.WritePlain", EscapedString "null") ]
+
+    static member private generateTypeSerializer(typ: SerializableType ref) =
+        let valueType = JsonEncoderCodegen.getTypeName typ
+
+        let serializerExpr =
+            match typ.Value with
+            | SerializableType.Basic b -> JsonEncoderCodegen.generateBasicSerializer b
+            | SerializableType.AnonymousRecord r -> JsonEncoderCodegen.generateAnonymousRecordSerializer r
+            | SerializableType.Record r -> JsonEncoderCodegen.generateRecordSerializer r
+            | SerializableType.Union u -> JsonEncoderCodegen.generateUnionSerializer u
+            | SerializableType.Enum e -> JsonEncoderCodegen.generateEnumSerializer e
+            | SerializableType.Tuple t -> JsonEncoderCodegen.generateTupleSerializer t
+            | SerializableType.Array a -> JsonEncoderCodegen.generateArraySerializer a
+            | SerializableType.List l -> JsonEncoderCodegen.generateListSerializer l
+            | SerializableType.Set s -> JsonEncoderCodegen.generateSetSerializer s
+            | SerializableType.Map(k, v) -> JsonEncoderCodegen.generateMapSerializer (k, v)
+            | SerializableType.UnitOfMeasure uom -> JsonEncoderCodegen.generateUnitOfMeasureSerializer uom
+            | SerializableType.Optional o -> JsonEncoderCodegen.generateOptionalSerializer o
+
+
+        let serializerParams =
+            ParenPat(
+                TuplePat(
+                    [ ParameterPat("value", valueType.ToString())
+                      ParameterPat("writer", "Fason.JsonWriter") ]
+                )
+            )
+
+        Member("serialize", serializerParams, serializerExpr).toStatic ()
+
+    static member private generateTypeDeserializer(typ: SerializableType ref) =
         let valueType = JsonEncoderCodegen.getTypeName typ
 
         Member(
@@ -61,6 +242,7 @@ type JsonEncoderCodegen =
     static member generate(types: SerializableType ref array) =
         // If we have any non-numeric uoms, add an import to FSharp.UMX.
         // TODO: This should work recursively, for things like fields of records, lists, etc.
+        // TODO: Should it? Won't we have all children types in this array anyway?
         let hasNonNumericUom =
             types
             |> Seq.exists (fun t ->
@@ -92,17 +274,17 @@ type JsonEncoderCodegen =
                 | SerializableType.Array a ->
                     match a.Value with
                     | SerializableType.UnitOfMeasure uom -> SerializableType.Array uom.baseType
-                    | other -> other
+                    | _ -> typ.Value
 
                 | SerializableType.List l ->
                     match l.Value with
                     | SerializableType.UnitOfMeasure uom -> SerializableType.List uom.baseType
-                    | other -> other
+                    | _ -> typ.Value
 
                 | SerializableType.Set s ->
                     match s.Value with
                     | SerializableType.UnitOfMeasure uom -> SerializableType.Set uom.baseType
-                    | other -> other
+                    | _ -> typ.Value
 
                 | SerializableType.Map(k, v) ->
                     match k.Value, v.Value with
@@ -115,8 +297,8 @@ type JsonEncoderCodegen =
                 | SerializableType.Optional o ->
                     match o.Value with
                     | SerializableType.UnitOfMeasure uom -> SerializableType.Optional uom.baseType
-                    | other -> other
-                | other -> other)
+                    | _ -> typ.Value
+                | _ -> typ.Value)
             |> Seq.distinct
 
         Oak() {
@@ -126,15 +308,15 @@ type JsonEncoderCodegen =
 
                 TypeDefn("JsonSerializer") {
                     for typ in typesWithSerializer do
-                        JsonEncoderCodegen.generateType (ref typ)
+                        JsonEncoderCodegen.generateTypeSerializer (ref typ)
                 }
 
-                StructEnd ("TypeIdentifier", Constructor(UnitPat())) { }
+                ClassEnd ("TypeIdentifier", Constructor(UnitPat())) { }
                 |> _.typeParams(PostfixList($"'T"))
 
                 TypeDefn("JsonDeserializer") {
                     for typ in typesWithSerializer do
-                        JsonEncoderCodegen.generateTypeDes (ref typ)
+                        JsonEncoderCodegen.generateTypeDeserializer (ref typ)
                 }
             }
         }

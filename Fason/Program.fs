@@ -52,7 +52,13 @@ let main () =
                 printfn $"Collected {serializableTypes.Length} serializable types."
 
                 let code = JsonEncoderCodegen.generate serializableTypes
-                printfn $"Generated code:\n{code}"
+
+                let outputPath =
+                    Path.Combine(Path.GetDirectoryName(projectPath), "Fason.Generated.fs")
+                    |> Path.GetFullPath
+
+                File.WriteAllText(outputPath, code)
+                printfn $"Generated code written to {outputPath}."
     }
 
 [<EntryPoint>]
