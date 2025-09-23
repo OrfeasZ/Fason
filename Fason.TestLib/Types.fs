@@ -97,6 +97,17 @@ module TestModule =
         | Green = 1
         | Blue = 2
 
+    type TestAdvanced =
+        { r: TestRecord
+          nr: TestNestedRecord
+          mr: TestRecordWithMeasure
+          u: TestUnion
+          ul: TestUnion list
+          e: TestEnum
+          el: TestEnum list
+          e64: TestEnumUint64
+          t: TestTuple }
+
 module TestModule2 =
     type TestModule.TestUnion with
         member self.otherName = self.ToString()
