@@ -467,7 +467,8 @@ type JsonEncoderCodegen =
               | BasicType.String -> AppExpr("reader.ReadString", "()")
               | BasicType.Guid -> AppExpr("reader.ReadGuid", "()")
               | BasicType.DateTime -> AppExpr("reader.ReadDateTime", "()")
-              | BasicType.TimeSpan -> AppExpr("reader.ReadTimeSpan", "()") ]
+              | BasicType.TimeSpan -> AppExpr("reader.ReadTimeSpan", "()")
+              | BasicType.Unit -> AppExpr("reader.ReadNull", "()") ]
 
     /// Generate code that deserializes a field of the given type.
     static member private parserForType(typ: SerializableType ref, withOptional: bool) =

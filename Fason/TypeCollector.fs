@@ -26,6 +26,7 @@ type BasicType =
     | Guid
     | DateTime
     | TimeSpan
+    | Unit
 
     member this.typeName: string<typeName> =
         match this with
@@ -47,6 +48,7 @@ type BasicType =
         | Guid -> %"System.Guid"
         | DateTime -> %"System.DateTime"
         | TimeSpan -> %"System.TimeSpan"
+        | Unit -> %"unit"
 
 [<Measure>]
 type typeName
@@ -134,7 +136,8 @@ let private basicTypeMap =
           typeof<string>.FullName, BasicType.String
           typeof<Guid>.FullName, BasicType.Guid
           typeof<DateTime>.FullName, BasicType.DateTime
-          typeof<TimeSpan>.FullName, BasicType.TimeSpan ]
+          typeof<TimeSpan>.FullName, BasicType.TimeSpan
+          typeof<unit>.FullName, BasicType.Unit ]
 
 let private typeToTypeName (typ: FSharpType) =
     try
@@ -145,7 +148,7 @@ let private typeToTypeName (typ: FSharpType) =
         with _ ->
             failwith $"Could not get type name for {typ}"
 
-let private tryMapBasic (typ: FSharpType) =
+let private tryMapBasic genericTypeArgs (typ: FSharpType) =
     try
         typ.StripAbbreviations().BasicQualifiedName
         |> basicTypeMap.TryFind
@@ -153,38 +156,46 @@ let private tryMapBasic (typ: FSharpType) =
     with ex ->
         None
 
-let private tryMapOptional (typ: FSharpType) =
+let private handleGenericType genericTypeArgs (typ: FSharpType) =
+    if not typ.IsGenericParameter then
+        typ |> typeFromFsharpType genericTypeArgs
+    else
+        match genericTypeArgs |> Map.tryFind typ.GenericParameter.Name with
+        | None -> failwith $"Could not find generic type argument for {typ}"
+        | Some actualType -> actualType
+
+let private tryMapOptional genericTypeArgs (typ: FSharpType) =
     let genericArgs = typ.GenericArguments |> Seq.toArray
 
     if genericArgs.Length <> 1 || typ.TypeDefinition.CompiledName <> "FSharpOption`1" then
         None
     else
-        let elementType = typ.GenericArguments[0] |> typeFromFsharpType
+        let elementType = typ.GenericArguments[0] |> handleGenericType genericTypeArgs
         Some(SerializableType.Optional elementType)
 
-let private tryMapList (typ: FSharpType) =
+let private tryMapList genericTypeArgs (typ: FSharpType) =
     let genericArgs = typ.GenericArguments |> Seq.toArray
 
     if genericArgs.Length <> 1 || typ.TypeDefinition.CompiledName <> "FSharpList`1" then
         None
     else
-        let elementType = typ.GenericArguments[0] |> typeFromFsharpType
+        let elementType = typ.GenericArguments[0] |> handleGenericType genericTypeArgs
         Some(SerializableType.List elementType)
 
-let private tryMapSet (typ: FSharpType) =
+let private tryMapSet genericTypeArgs (typ: FSharpType) =
     let genericArgs = typ.GenericArguments |> Seq.toArray
 
     if genericArgs.Length <> 1 || typ.TypeDefinition.CompiledName <> "FSharpSet`1" then
         None
     else
-        let elementType = typ.GenericArguments[0] |> typeFromFsharpType
+        let elementType = typ.GenericArguments[0] |> handleGenericType genericTypeArgs
         Some(SerializableType.Set elementType)
 
-let private tryMapUom (typ: FSharpType) =
+let private tryMapUom genericTypeArgs (typ: FSharpType) =
     if typ.GenericArguments.Count = 0 || not typ.GenericArguments[0].IsMeasureType then
         None
     else
-        let baseType = typ.ErasedType |> typeFromFsharpType
+        let baseType = typ.ErasedType |> handleGenericType genericTypeArgs
         let uomType = typ.GenericArguments[0]
         let uomTypeName = uomType |> typeToTypeName
 
@@ -194,7 +205,7 @@ let private tryMapUom (typ: FSharpType) =
                   unitOfMeasure = uomTypeName }
         )
 
-let private tryMapAnonRecord (typ: FSharpType) =
+let private tryMapAnonRecord genericTypeArgs (typ: FSharpType) =
     if not typ.IsAnonRecordType then
         None
     else
@@ -205,41 +216,62 @@ let private tryMapAnonRecord (typ: FSharpType) =
             typ.AnonRecordTypeDetails.SortedFieldNames
             |> Seq.mapi (fun i name ->
                 { name = name
-                  fieldType = argTypes[i] |> typeFromFsharpType
+                  fieldType = argTypes[i] |> handleGenericType genericTypeArgs
                   defaultValue = None })
             |> Seq.toList
 
         Some(SerializableType.AnonymousRecord { fields = fields })
 
-let private mapRecordFields (fields: FSharpField seq) =
+let private mapRecordFields genericTypeArgs (fields: FSharpField seq) =
     // TODO: Handle attributes
     fields
     |> Seq.filter (fun f -> not f.IsStatic)
     |> Seq.map (fun f ->
         { name = f.Name
-          fieldType = f.FieldType |> typeFromFsharpType
+          fieldType = f.FieldType |> handleGenericType genericTypeArgs
           defaultValue = None })
     |> Seq.toList
 
-let private tryMapRecord (typ: FSharpType) =
+let private getGenericTypeArgs genericTypeArgs (typ: FSharpType) =
+    let genericArgs = typ.TypeDefinition.GenericArguments
+    let genericParams = typ.TypeDefinition.GenericParameters
+
+    if genericArgs.Count <> genericParams.Count then
+        failwith
+            $"Generic arguments and parameters count mismatch for {typ}. This probably means not all generic arguments were specified, which is not supported."
+
+    genericParams
+    |> Seq.mapi (fun i p -> p.Name, genericArgs[i] |> handleGenericType genericTypeArgs)
+    |> Map.ofSeq
+
+let inline private mergeMaps (m1: Map<'a, 'b>) (m2: Map<'a, 'b>) =
+    m1 |> Map.fold (fun acc k v -> acc |> Map.add k v) m2
+
+let private tryMapRecord genericTypeArgs (typ: FSharpType) =
     if not typ.TypeDefinition.IsFSharpRecord then
         None
     else
+        let ourGenericTypeArgs = typ |> getGenericTypeArgs genericTypeArgs
+        let genericTypeArgs = genericTypeArgs |> mergeMaps ourGenericTypeArgs
+
         Some(
             SerializableType.Record
                 { name = typ |> typeToTypeName
-                  fields = typ.TypeDefinition.FSharpFields |> mapRecordFields }
+                  fields = typ.TypeDefinition.FSharpFields |> mapRecordFields genericTypeArgs }
         )
 
-let private tryMapUnion (typ: FSharpType) =
+let private tryMapUnion genericTypeArgs (typ: FSharpType) =
     if not typ.TypeDefinition.IsFSharpUnion then
         None
     else
+        let ourGenericTypeArgs = typ |> getGenericTypeArgs genericTypeArgs
+        let genericTypeArgs = genericTypeArgs |> mergeMaps ourGenericTypeArgs
+
         let cases =
             typ.TypeDefinition.UnionCases
             |> Seq.map (fun uc ->
                 { name = uc.Name
-                  fields = uc.Fields |> mapRecordFields })
+                  fields = uc.Fields |> mapRecordFields genericTypeArgs })
             |> Seq.toList
 
         Some(
@@ -248,7 +280,7 @@ let private tryMapUnion (typ: FSharpType) =
                   cases = cases }
         )
 
-let private tryMapEnum (typ: FSharpType) =
+let private tryMapEnum genericTypeArgs (typ: FSharpType) =
     if not typ.TypeDefinition.IsEnum then
         None
     else
@@ -280,11 +312,11 @@ let private tryMapEnum (typ: FSharpType) =
                   valueType = enumType }
         )
 
-let private tryMapTuple (typ: FSharpType) =
+let private tryMapTuple genericTypeArgs (typ: FSharpType) =
     if not typ.IsTupleType then
         None
     else
-        let types = typ.GenericArguments |> Seq.map typeFromFsharpType
+        let types = typ.GenericArguments |> Seq.map (handleGenericType genericTypeArgs)
 
         // TODO: Handle attributes
         Some(
@@ -292,26 +324,52 @@ let private tryMapTuple (typ: FSharpType) =
                 { values = types |> Seq.map (fun t -> { valueType = t; defaultValue = None }) |> Seq.toList }
         )
 
-let private tryMapArray (typ: FSharpType) =
+let private tryMapArray genericTypeArgs (typ: FSharpType) =
     if not typ.TypeDefinition.IsArrayType then
         None
     else
-        let elementType = typ.GenericArguments[0] |> typeFromFsharpType
+        let elementType = typ.GenericArguments[0] |> handleGenericType genericTypeArgs
 
         Some(SerializableType.Array elementType)
 
-let private tryMapMap (typ: FSharpType) =
+let private tryMapMap genericTypeArgs (typ: FSharpType) =
     let genericArgs = typ.GenericArguments |> Seq.toArray
 
     if genericArgs.Length <> 2 || typ.TypeDefinition.CompiledName <> "FSharpMap`2" then
         None
     else
-        let keyType = typ.GenericArguments[0] |> typeFromFsharpType
-        let valueType = typ.GenericArguments[1] |> typeFromFsharpType
+        let keyType = typ.GenericArguments[0] |> handleGenericType genericTypeArgs
+        let valueType = typ.GenericArguments[1] |> handleGenericType genericTypeArgs
 
         Some(SerializableType.Map(keyType, valueType))
 
-let private typeFromFsharpType (typ: FSharpType) =
+let private tryMapInterface genericTypeArgs (typ: FSharpType) =
+    if not typ.TypeDefinition.IsInterface then
+        None
+    else
+        // Collect all types from members.
+        for memb in typ.TypeDefinition.MembersFunctionsAndValues do
+            let args = memb.FullType.GenericArguments[0]
+
+            let returnType = memb.FullType.GenericArguments[1]
+
+            // TODO: Remove this when releasing publicly.
+            // If returnType is wrapped in AsyncAction<>, unwrap it.
+            let returnType =
+                if returnType.TypeDefinition.CompiledName = "AsyncAction`1" then
+                    returnType.GenericArguments[0]
+                else
+                    returnType
+
+            // We just call these to collect the types.
+            let _argTyp = args |> typeFromFsharpType genericTypeArgs
+            let _returnType = returnType |> typeFromFsharpType genericTypeArgs
+
+            ()
+
+        Some(SerializableType.Basic BasicType.Unit)
+
+let private typeFromFsharpType (genericTypeArgs: Map<string, SerializableType ref>) (typ: FSharpType) =
     let typ = typ.StripAbbreviations()
 
     let found, serializableType = types.TryGetValue typ
@@ -319,20 +377,23 @@ let private typeFromFsharpType (typ: FSharpType) =
     if found then
         serializableType
     else
+        printfn $"Trying to map type: {typ}"
+
         let sTyp =
             typ
-            |> tryMapBasic
-            |> Option.orElseWith (fun () -> tryMapUom typ)
-            |> Option.orElseWith (fun () -> tryMapAnonRecord typ)
-            |> Option.orElseWith (fun () -> tryMapOptional typ)
-            |> Option.orElseWith (fun () -> tryMapList typ)
-            |> Option.orElseWith (fun () -> tryMapSet typ)
-            |> Option.orElseWith (fun () -> tryMapTuple typ)
-            |> Option.orElseWith (fun () -> tryMapRecord typ)
-            |> Option.orElseWith (fun () -> tryMapUnion typ)
-            |> Option.orElseWith (fun () -> tryMapEnum typ)
-            |> Option.orElseWith (fun () -> tryMapArray typ)
-            |> Option.orElseWith (fun () -> tryMapMap typ)
+            |> tryMapBasic genericTypeArgs
+            |> Option.orElseWith (fun () -> tryMapUom genericTypeArgs typ)
+            |> Option.orElseWith (fun () -> tryMapAnonRecord genericTypeArgs typ)
+            |> Option.orElseWith (fun () -> tryMapOptional genericTypeArgs typ)
+            |> Option.orElseWith (fun () -> tryMapList genericTypeArgs typ)
+            |> Option.orElseWith (fun () -> tryMapSet genericTypeArgs typ)
+            |> Option.orElseWith (fun () -> tryMapTuple genericTypeArgs typ)
+            |> Option.orElseWith (fun () -> tryMapRecord genericTypeArgs typ)
+            |> Option.orElseWith (fun () -> tryMapUnion genericTypeArgs typ)
+            |> Option.orElseWith (fun () -> tryMapEnum genericTypeArgs typ)
+            |> Option.orElseWith (fun () -> tryMapArray genericTypeArgs typ)
+            |> Option.orElseWith (fun () -> tryMapMap genericTypeArgs typ)
+            |> Option.orElseWith (fun () -> tryMapInterface genericTypeArgs typ)
             |> Option.defaultWith (fun () -> failwith $"Unsupported type {typ}")
 
         let typRef = ref sTyp
@@ -343,7 +404,7 @@ let collectFrom (entity: FSharpEntity) =
     if not entity.IsFSharpModule && not entity.IsMeasure then
         try
             let typ = entity.AsType().StripAbbreviations()
-            let serializableType = typ |> typeFromFsharpType
+            let serializableType = typ |> typeFromFsharpType Map.empty
 
             printfn $"Entity {entity}: %A{serializableType}"
         with ex ->
