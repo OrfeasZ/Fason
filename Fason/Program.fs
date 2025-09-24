@@ -24,9 +24,19 @@ let main () =
             Init.setupForSdkVersion sdkToUse.Path dotnetRoot
             let toolsPath = Types.ToolsPath(Path.Combine(sdkToUse.Path.FullName, "MSBuild.dll"))
 
+            printfn $"Using SDK {sdkToUse.Version} at {sdkToUse.Path} (toolsPath={toolsPath}) to load {projectPath}"
+
+            let logDir = Path.Combine(Path.GetDirectoryName(projectPath), ".msbuild")
+            let logDir = Directory.CreateDirectory(logDir)
+
+            printfn $"Log directory: {logDir.FullName}"
+
             // Try to load the target project.
             let defaultLoader = WorkspaceLoader.Create(toolsPath, [])
-            let projectOptions = defaultLoader.LoadProjects([ projectPath ]) |> Seq.toArray
+
+            let projectOptions =
+                defaultLoader.LoadProjects([ projectPath ], [], BinaryLogGeneration.Within logDir)
+                |> Seq.toArray
 
             if projectOptions.Length = 0 then
                 failwith "Failed to load project"
