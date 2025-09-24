@@ -108,6 +108,15 @@ module TestModule =
           e64: TestEnumUint64
           t: TestTuple }
 
+    type Weird =
+        {| small: int
+           smaller: int
+           smile: int option
+           address: int
+           ad: int
+           banana: int
+           sad: int |}
+
 module TestModule2 =
     type TestModule.TestUnion with
         member self.otherName = self.ToString()
