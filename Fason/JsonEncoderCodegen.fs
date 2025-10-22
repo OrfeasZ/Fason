@@ -6,6 +6,7 @@ open System.IO
 open System.Linq
 open System.Reflection
 open System.Text
+open Fabulous.AST.ComputationExpressionStatement
 open Fason.TypeCollector
 open Fabulous.AST
 open type Fabulous.AST.Ast
@@ -455,23 +456,8 @@ type JsonEncoderCodegen =
         )
 
     static member private generateTypeSerializer(typ: SerializableType ref, ?fsi: bool) =
+        let fsi = defaultArg fsi false
         let valueType = JsonEncoderCodegen.getTypeName typ
-
-        let serializerExpr =
-            match typ.Value with
-            | SerializableType.Basic b -> JsonEncoderCodegen.generateBasicSerializer b
-            | SerializableType.AnonymousRecord r -> JsonEncoderCodegen.generateAnonymousRecordSerializer r
-            | SerializableType.Record r -> JsonEncoderCodegen.generateRecordSerializer r
-            | SerializableType.Union u -> JsonEncoderCodegen.generateUnionSerializer u
-            | SerializableType.Enum e -> JsonEncoderCodegen.generateEnumSerializer e
-            | SerializableType.Tuple t -> JsonEncoderCodegen.generateTupleSerializer t
-            | SerializableType.Array a -> JsonEncoderCodegen.generateArraySerializer a
-            | SerializableType.List l -> JsonEncoderCodegen.generateListSerializer l
-            | SerializableType.Set s -> JsonEncoderCodegen.generateSetSerializer s
-            | SerializableType.Map(k, v) -> JsonEncoderCodegen.generateMapSerializer (k, v)
-            | SerializableType.UnitOfMeasure uom -> JsonEncoderCodegen.generateUnitOfMeasureSerializer uom
-            | SerializableType.Optional o -> JsonEncoderCodegen.generateOptionalSerializer o
-
 
         let serializerParams =
             ParenPat(
@@ -483,7 +469,26 @@ type JsonEncoderCodegen =
                 )
             )
 
-        Member("serialize", serializerParams, serializerExpr).toStatic ()
+        if fsi then
+            FsiMember("serialize", serializerParams) |> _.toStatic() |> _.returnType("unit")
+
+        else
+            let serializerExpr =
+                match typ.Value with
+                | SerializableType.Basic b -> JsonEncoderCodegen.generateBasicSerializer b
+                | SerializableType.AnonymousRecord r -> JsonEncoderCodegen.generateAnonymousRecordSerializer r
+                | SerializableType.Record r -> JsonEncoderCodegen.generateRecordSerializer r
+                | SerializableType.Union u -> JsonEncoderCodegen.generateUnionSerializer u
+                | SerializableType.Enum e -> JsonEncoderCodegen.generateEnumSerializer e
+                | SerializableType.Tuple t -> JsonEncoderCodegen.generateTupleSerializer t
+                | SerializableType.Array a -> JsonEncoderCodegen.generateArraySerializer a
+                | SerializableType.List l -> JsonEncoderCodegen.generateListSerializer l
+                | SerializableType.Set s -> JsonEncoderCodegen.generateSetSerializer s
+                | SerializableType.Map(k, v) -> JsonEncoderCodegen.generateMapSerializer (k, v)
+                | SerializableType.UnitOfMeasure uom -> JsonEncoderCodegen.generateUnitOfMeasureSerializer uom
+                | SerializableType.Optional o -> JsonEncoderCodegen.generateOptionalSerializer o
+
+            Member("serialize", serializerParams, serializerExpr).toStatic ()
 
     static member private generateBasicDeserializer(b: BasicType) =
         CompExprBodyExpr [
@@ -1098,22 +1103,8 @@ type JsonEncoderCodegen =
         ]
 
     static member private generateTypeDeserializer(typ: SerializableType ref, ?fsi: bool) =
+        let fsi = defaultArg fsi false
         let valueType = JsonEncoderCodegen.getTypeName typ
-
-        let deserializerExpr =
-            match typ.Value with
-            | SerializableType.Basic b -> JsonEncoderCodegen.generateBasicDeserializer b
-            | SerializableType.AnonymousRecord r -> JsonEncoderCodegen.generateAnonymousRecordDeserializer (r, valueType)
-            | SerializableType.Record r -> JsonEncoderCodegen.generateRecordDeserializer (r, valueType)
-            | SerializableType.Union u -> JsonEncoderCodegen.generateUnionDeserializer u
-            | SerializableType.Enum e -> JsonEncoderCodegen.generateEnumDeserializer e
-            | SerializableType.Tuple t -> JsonEncoderCodegen.generateTupleDeserializer t
-            | SerializableType.Array a -> JsonEncoderCodegen.generateArrayDeserializer a
-            | SerializableType.List l -> JsonEncoderCodegen.generateListDeserializer l
-            | SerializableType.Set s -> JsonEncoderCodegen.generateSetDeserializer s
-            | SerializableType.Map(k, v) -> JsonEncoderCodegen.generateMapDeserializer (k, v)
-            | SerializableType.UnitOfMeasure uom -> JsonEncoderCodegen.generateUnitOfMeasureDeserializer uom
-            | SerializableType.Optional o -> JsonEncoderCodegen.generateOptionalDeserializer o
 
         let deserializerParams =
             ParenPat(
@@ -1125,7 +1116,28 @@ type JsonEncoderCodegen =
                 )
             )
 
-        Member("deserialize", deserializerParams, deserializerExpr).toStatic ()
+        if fsi then
+            FsiMember("deserialize", deserializerParams)
+            |> _.toStatic()
+            |> _.returnType(valueType.ToString())
+
+        else
+            let deserializerExpr =
+                match typ.Value with
+                | SerializableType.Basic b -> JsonEncoderCodegen.generateBasicDeserializer b
+                | SerializableType.AnonymousRecord r -> JsonEncoderCodegen.generateAnonymousRecordDeserializer (r, valueType)
+                | SerializableType.Record r -> JsonEncoderCodegen.generateRecordDeserializer (r, valueType)
+                | SerializableType.Union u -> JsonEncoderCodegen.generateUnionDeserializer u
+                | SerializableType.Enum e -> JsonEncoderCodegen.generateEnumDeserializer e
+                | SerializableType.Tuple t -> JsonEncoderCodegen.generateTupleDeserializer t
+                | SerializableType.Array a -> JsonEncoderCodegen.generateArrayDeserializer a
+                | SerializableType.List l -> JsonEncoderCodegen.generateListDeserializer l
+                | SerializableType.Set s -> JsonEncoderCodegen.generateSetDeserializer s
+                | SerializableType.Map(k, v) -> JsonEncoderCodegen.generateMapDeserializer (k, v)
+                | SerializableType.UnitOfMeasure uom -> JsonEncoderCodegen.generateUnitOfMeasureDeserializer uom
+                | SerializableType.Optional o -> JsonEncoderCodegen.generateOptionalDeserializer o
+
+            Member("deserialize", deserializerParams, deserializerExpr).toStatic ()
 
     static member private optimize(oak: Fantomas.Core.SyntaxOak.Oak) =
         // Go through children recursively, combining consecutive writer.WritePlain AppExprs into one.

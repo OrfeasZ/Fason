@@ -6,6 +6,7 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <Compile Include="FsiMember.fs"/>
         <Compile Include="TypeCollector.fs"/>
         <Compile Include="JsonEncoderCodegen.fs"/>
         <Compile Include="Program.fs"/>

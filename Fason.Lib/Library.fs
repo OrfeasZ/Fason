@@ -32,7 +32,8 @@ type JsonWriter() =
         this.WriteInternal("\"")
 
         value.ToCharArray()
-        |> Array.iter (function
+        |> Array.iter (
+            function
             | '"' -> this.WriteInternal("\\\"")
             | '\\' -> this.WriteInternal("\\\\")
             | '/' -> this.WriteInternal("\\/")
@@ -42,7 +43,8 @@ type JsonWriter() =
             | '\r' -> this.WriteInternal("\\r")
             | '\t' -> this.WriteInternal("\\t")
             | c when c >= '\u0000' && c <= '\u001F' -> this.WriteInternal($"\\u{uint16 c:X4}")
-            | c -> this.WriteInternal(c.ToString()))
+            | c -> this.WriteInternal(c.ToString())
+        )
 
         this.WriteInternal("\"")
 
@@ -51,6 +53,8 @@ type JsonWriter() =
             this.WriteInternal("true")
         else
             this.WriteInternal("false")
+
+    member this.Write(value: unit) = this.WriteInternal("null")
 
     member this.Write(value: byte) = this.WriteInternal(value.ToString())
     member this.Write(value: sbyte) = this.WriteInternal(value.ToString())
@@ -159,8 +163,8 @@ type JsonReader(json: string) =
         while this.Peek() |> Option.exists isWhitespace do
             this.Skip()
 
-        //let skipped = index - prevIndex
-        //printfn $"Skipped {skipped} whitespace characters."
+    //let skipped = index - prevIndex
+    //printfn $"Skipped {skipped} whitespace characters."
 
     /// Ignores all whitespace until it finds a non-whitespace character.
     /// If the following characters match the provided value, returns true.

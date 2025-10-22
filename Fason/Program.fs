@@ -52,8 +52,7 @@ let main () =
                 for entity in result.AssemblySignature.Entities do
                     let isFasonSerializable =
                         entity.Attributes
-                        |> Seq.exists (fun attr ->
-                            attr.AttributeType.TryGetFullName() = Some typeof<FasonSerializableAttribute>.FullName)
+                        |> Seq.exists (fun attr -> attr.AttributeType.TryGetFullName() = Some typeof<FasonSerializableAttribute>.FullName)
 
                     if isFasonSerializable then
                         entity |> TypeCollector.collectFrom
@@ -61,14 +60,19 @@ let main () =
                 let serializableTypes = TypeCollector.getSerializableTypes ()
                 printfn $"Collected {serializableTypes.Length} serializable types."
 
-                let code = JsonEncoderCodegen.generate serializableTypes
+                let code, sigCode = JsonEncoderCodegen.generate serializableTypes
 
                 let outputPath =
                     Path.Combine(Path.GetDirectoryName(projectPath), "Fason.Generated.fs")
                     |> Path.GetFullPath
 
+                let sigPath = Path.ChangeExtension(outputPath, "fsi")
+
                 File.WriteAllText(outputPath, code)
                 printfn $"Generated code written to {outputPath}."
+
+                File.WriteAllText(sigPath, sigCode)
+                printfn $"Generated signature code written to {sigPath}."
     }
 
 [<EntryPoint>]

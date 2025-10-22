@@ -54,50 +54,57 @@ type BasicType =
 type typeName
 
 /// A named field of a record type or union case.
-type RecordField =
-    { name: string
-      fieldType: SerializableType ref
-      defaultValue: obj option }
+type RecordField = {
+    name: string
+    fieldType: SerializableType ref
+    defaultValue: obj option
+}
 
 /// An anonymous record type.
 type AnonymousRecordType = { fields: RecordField list }
 
 /// A record type.
-type RecordType =
-    { name: string<typeName>
-      fields: RecordField list }
+type RecordType = {
+    name: string<typeName>
+    fields: RecordField list
+}
 
 /// A case of a union type.
-type UnionCase =
-    { name: string
-      fields: RecordField list }
+type UnionCase = {
+    name: string
+    fields: RecordField list
+}
 
 /// A union type.
-type UnionType =
-    { name: string<typeName>
-      cases: UnionCase list }
+type UnionType = {
+    name: string<typeName>
+    cases: UnionCase list
+}
 
 /// A value of an enum type.
 type EnumValue = { name: string; value: obj }
 
 /// An enum type.
-type EnumType =
-    { name: string<typeName>
-      values: EnumValue list
-      valueType: BasicType }
+type EnumType = {
+    name: string<typeName>
+    values: EnumValue list
+    valueType: BasicType
+}
 
 /// A value of a tuple type.
-type TupleValue =
-    { valueType: SerializableType ref
-      defaultValue: obj option }
+type TupleValue = {
+    valueType: SerializableType ref
+    defaultValue: obj option
+}
 
 /// A tuple type.
 type TupleType = { values: TupleValue list }
 
 /// A unit of measure type.
-type UomType =
-    { baseType: SerializableType ref
-      unitOfMeasure: string<typeName> }
+type UomType = {
+    baseType: SerializableType ref
+    unitOfMeasure: string<typeName>
+}
 
 [<RequireQualifiedAccess>]
 type SerializableType =
@@ -114,32 +121,59 @@ type SerializableType =
     | UnitOfMeasure of UomType
     | Optional of SerializableType ref
 
+    override this.ToString() =
+        match this with
+        | Basic b -> b.typeName.ToString()
+        | AnonymousRecord r ->
+            "{|"
+            + (r.fields
+               |> List.map (fun f -> $"{f.name}: {f.fieldType.Value.ToString()}")
+               |> String.concat "; ")
+            + "|}"
+        | Record r -> r.name.ToString()
+        | Union u -> u.name.ToString()
+        | Enum e -> e.name.ToString()
+        | Tuple t ->
+            "("
+            + (t.values |> List.map _.valueType.Value.ToString() |> String.concat ", ")
+            + ")"
+        | Array a -> $"{a.Value.ToString()} array"
+        | List l -> $"{l.Value.ToString()} list"
+        | Set s -> $"Set<{s.Value.ToString()}>"
+        | Map(k, v) -> $"Map<{k.Value.ToString()}, {v.Value.ToString()}>"
+        | UnitOfMeasure uom -> $"{uom.baseType.Value.ToString()}<{uom.unitOfMeasure}>"
+        | Optional o -> $"{o.Value.ToString()} option"
+
 /// Collection of all types that are serializable, that we've collected so far.
 let private types = Dictionary<FSharpType, SerializableType ref>()
 
 let private basicTypeMap =
-    Map
-        [ typeof<bool>.FullName, BasicType.Bool
-          typeof<byte>.FullName, BasicType.Byte
-          typeof<sbyte>.FullName, BasicType.SByte
-          typeof<char>.FullName, BasicType.Char
-          typeof<int8>.FullName, BasicType.Int8
-          typeof<int16>.FullName, BasicType.Int16
-          typeof<int32>.FullName, BasicType.Int32
-          typeof<int64>.FullName, BasicType.Int64
-          typeof<uint8>.FullName, BasicType.UInt8
-          typeof<uint16>.FullName, BasicType.UInt16
-          typeof<uint32>.FullName, BasicType.UInt32
-          typeof<uint64>.FullName, BasicType.UInt64
-          typeof<single>.FullName, BasicType.Single
-          typeof<double>.FullName, BasicType.Double
-          typeof<string>.FullName, BasicType.String
-          typeof<Guid>.FullName, BasicType.Guid
-          typeof<DateTime>.FullName, BasicType.DateTime
-          typeof<TimeSpan>.FullName, BasicType.TimeSpan
-          typeof<unit>.FullName, BasicType.Unit ]
+    Map [
+        typeof<bool>.FullName, BasicType.Bool
+        typeof<byte>.FullName, BasicType.Byte
+        typeof<sbyte>.FullName, BasicType.SByte
+        typeof<char>.FullName, BasicType.Char
+        typeof<int8>.FullName, BasicType.Int8
+        typeof<int16>.FullName, BasicType.Int16
+        typeof<int32>.FullName, BasicType.Int32
+        typeof<int64>.FullName, BasicType.Int64
+        typeof<uint8>.FullName, BasicType.UInt8
+        typeof<uint16>.FullName, BasicType.UInt16
+        typeof<uint32>.FullName, BasicType.UInt32
+        typeof<uint64>.FullName, BasicType.UInt64
+        typeof<single>.FullName, BasicType.Single
+        typeof<double>.FullName, BasicType.Double
+        typeof<string>.FullName, BasicType.String
+        typeof<Guid>.FullName, BasicType.Guid
+        typeof<DateTime>.FullName, BasicType.DateTime
+        typeof<TimeSpan>.FullName, BasicType.TimeSpan
+        typeof<unit>.FullName, BasicType.Unit
+    ]
 
-let private typeToTypeName (typ: FSharpType) =
+let private typeToTypeName genericTypeArgs (typ: FSharpType) =
+    // Make sure this type is mapped.
+    //typ |> typeFromFsharpType genericTypeArgs |> ignore
+
     try
         %(typ.TypeDefinition :> FSharpSymbol).FullName
     with _ ->
@@ -197,12 +231,13 @@ let private tryMapUom genericTypeArgs (typ: FSharpType) =
     else
         let baseType = typ.ErasedType |> handleGenericType genericTypeArgs
         let uomType = typ.GenericArguments[0]
-        let uomTypeName = uomType |> typeToTypeName
+        let uomTypeName = uomType |> typeToTypeName genericTypeArgs
 
         Some(
-            SerializableType.UnitOfMeasure
-                { baseType = baseType
-                  unitOfMeasure = uomTypeName }
+            SerializableType.UnitOfMeasure {
+                baseType = baseType
+                unitOfMeasure = uomTypeName
+            }
         )
 
 let private tryMapAnonRecord genericTypeArgs (typ: FSharpType) =
@@ -214,10 +249,11 @@ let private tryMapAnonRecord genericTypeArgs (typ: FSharpType) =
         // TODO: Handle attributes
         let fields =
             typ.AnonRecordTypeDetails.SortedFieldNames
-            |> Seq.mapi (fun i name ->
-                { name = name
-                  fieldType = argTypes[i] |> handleGenericType genericTypeArgs
-                  defaultValue = None })
+            |> Seq.mapi (fun i name -> {
+                name = name
+                fieldType = argTypes[i] |> handleGenericType genericTypeArgs
+                defaultValue = None
+            })
             |> Seq.toList
 
         Some(SerializableType.AnonymousRecord { fields = fields })
@@ -226,10 +262,11 @@ let private mapRecordFields genericTypeArgs (fields: FSharpField seq) =
     // TODO: Handle attributes
     fields
     |> Seq.filter (fun f -> not f.IsStatic)
-    |> Seq.map (fun f ->
-        { name = f.Name
-          fieldType = f.FieldType |> handleGenericType genericTypeArgs
-          defaultValue = None })
+    |> Seq.map (fun f -> {
+        name = f.Name
+        fieldType = f.FieldType |> handleGenericType genericTypeArgs
+        defaultValue = None
+    })
     |> Seq.toList
 
 let private getGenericTypeArgs genericTypeArgs (typ: FSharpType) =
@@ -255,9 +292,10 @@ let private tryMapRecord genericTypeArgs (typ: FSharpType) =
         let genericTypeArgs = genericTypeArgs |> mergeMaps ourGenericTypeArgs
 
         Some(
-            SerializableType.Record
-                { name = typ |> typeToTypeName
-                  fields = typ.TypeDefinition.FSharpFields |> mapRecordFields genericTypeArgs }
+            SerializableType.Record {
+                name = typ |> typeToTypeName genericTypeArgs
+                fields = typ.TypeDefinition.FSharpFields |> mapRecordFields genericTypeArgs
+            }
         )
 
 let private tryMapUnion genericTypeArgs (typ: FSharpType) =
@@ -269,15 +307,17 @@ let private tryMapUnion genericTypeArgs (typ: FSharpType) =
 
         let cases =
             typ.TypeDefinition.UnionCases
-            |> Seq.map (fun uc ->
-                { name = uc.Name
-                  fields = uc.Fields |> mapRecordFields genericTypeArgs })
+            |> Seq.map (fun uc -> {
+                name = uc.Name
+                fields = uc.Fields |> mapRecordFields genericTypeArgs
+            })
             |> Seq.toList
 
         Some(
-            SerializableType.Union
-                { name = typ |> typeToTypeName
-                  cases = cases }
+            SerializableType.Union {
+                name = typ |> typeToTypeName genericTypeArgs
+                cases = cases
+            }
         )
 
 let private tryMapEnum genericTypeArgs (typ: FSharpType) =
@@ -292,24 +332,24 @@ let private tryMapEnum genericTypeArgs (typ: FSharpType) =
 
         let values =
             valueFields
-            |> Seq.map (fun f ->
-                { name = f.Name
-                  value = f.LiteralValue.Value })
+            |> Seq.map (fun f -> {
+                name = f.Name
+                value = f.LiteralValue.Value
+            })
             |> Seq.toList
 
         let enumType =
             match basicTypeMap |> Map.tryFind (values.Head.value.GetType().FullName) with
-            | None ->
-                failwith
-                    $"Enum {typ} uses an unsupported type as its underlying type: {values.Head.value.GetType().FullName}"
+            | None -> failwith $"Enum {typ} uses an unsupported type as its underlying type: {values.Head.value.GetType().FullName}"
 
             | Some t -> t
 
         Some(
-            SerializableType.Enum
-                { name = typ |> typeToTypeName
-                  values = values
-                  valueType = enumType }
+            SerializableType.Enum {
+                name = typ |> typeToTypeName genericTypeArgs
+                values = values
+                valueType = enumType
+            }
         )
 
 let private tryMapTuple genericTypeArgs (typ: FSharpType) =
@@ -320,8 +360,9 @@ let private tryMapTuple genericTypeArgs (typ: FSharpType) =
 
         // TODO: Handle attributes
         Some(
-            SerializableType.Tuple
-                { values = types |> Seq.map (fun t -> { valueType = t; defaultValue = None }) |> Seq.toList }
+            SerializableType.Tuple {
+                values = types |> Seq.map (fun t -> { valueType = t; defaultValue = None }) |> Seq.toList
+            }
         )
 
 let private tryMapArray genericTypeArgs (typ: FSharpType) =
@@ -377,7 +418,7 @@ let private typeFromFsharpType (genericTypeArgs: Map<string, SerializableType re
     if found then
         serializableType
     else
-        printfn $"Trying to map type: {typ}"
+        //printfn $"Trying to map type: {typ}"
 
         let sTyp =
             typ
@@ -396,6 +437,8 @@ let private typeFromFsharpType (genericTypeArgs: Map<string, SerializableType re
             |> Option.orElseWith (fun () -> tryMapInterface genericTypeArgs typ)
             |> Option.defaultWith (fun () -> failwith $"Unsupported type {typ}")
 
+        printfn $"{sTyp}"
+
         let typRef = ref sTyp
         types.Add(typ, typRef)
         typRef
@@ -406,7 +449,9 @@ let collectFrom (entity: FSharpEntity) =
             let typ = entity.AsType().StripAbbreviations()
             let serializableType = typ |> typeFromFsharpType Map.empty
 
-            printfn $"Entity {entity}: %A{serializableType}"
+            //printfn $"Entity {entity}: %A{serializableType}"
+            ()
+
         with ex ->
             eprintfn $"Unsupported entity {entity}: %A{ex}"
 
