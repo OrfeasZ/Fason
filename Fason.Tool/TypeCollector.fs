@@ -1,0 +1,338 @@
+module rec Fason.TypeCollector
+
+open System
+open System.Collections.Generic
+open FSharp.Compiler.Symbols
+open FSharp.UMX
+
+/// A basic "built-in" type.
+[<RequireQualifiedAccess>]
+type BasicType =
+    | Bool
+    | Char
+    | Int8
+    | Int16
+    | Int32
+    | Int64
+    | UInt8
+    | UInt16
+    | UInt32
+    | UInt64
+    | Single
+    | Double
+    | String
+    | Guid
+    | DateTime
+    | TimeSpan
+    | Unit
+
+    member this.typeName: string<typeName> =
+        match this with
+        | Bool -> %"bool"
+        | Char -> %"char"
+        | Int8 -> %"int8"
+        | Int16 -> %"int16"
+        | Int32 -> %"int32"
+        | Int64 -> %"int64"
+        | UInt8 -> %"uint8"
+        | UInt16 -> %"uint16"
+        | UInt32 -> %"uint32"
+        | UInt64 -> %"uint64"
+        | Single -> %"single"
+        | Double -> %"double"
+        | String -> %"string"
+        | Guid -> %"System.Guid"
+        | DateTime -> %"System.DateTime"
+        | TimeSpan -> %"System.TimeSpan"
+        | Unit -> %"unit"
+
+[<Measure>]
+type typeName
+
+/// A named field of a record type or union case.
+type RecordField =
+    { name: string
+      fieldType: SerializableType ref
+      defaultValue: obj option }
+
+type AnonymousRecordType = { fields: RecordField list }
+
+type RecordType =
+    { name: string<typeName>
+      typeArgs: SerializableType ref list
+      fields: RecordField list }
+
+type UnionCase =
+    { name: string
+      fields: RecordField list }
+
+type UnionType =
+    { name: string<typeName>
+      typeArgs: SerializableType ref list
+      cases: UnionCase list }
+
+type EnumValue = { name: string; value: obj }
+
+type EnumType =
+    { name: string<typeName>
+      values: EnumValue list
+      valueType: BasicType }
+
+type TupleValue =
+    { valueType: SerializableType ref
+      defaultValue: obj option }
+
+type TupleType = { values: TupleValue list }
+
+type UomType =
+    { baseType: SerializableType ref
+      unitOfMeasure: string<typeName> }
+
+[<RequireQualifiedAccess>]
+type SerializableType =
+    | Basic of BasicType
+    | AnonymousRecord of AnonymousRecordType
+    | Record of RecordType
+    | Union of UnionType
+    | Enum of EnumType
+    | Tuple of TupleType
+    | Array of SerializableType ref
+    | List of SerializableType ref
+    | Set of SerializableType ref
+    | Map of key: SerializableType ref * value: SerializableType ref
+    | UnitOfMeasure of UomType
+    | Optional of SerializableType ref
+
+/// Collection of all types that are serializable, that we've collected so far.
+let private types = Dictionary<FSharpType * int list, SerializableType ref>()
+
+let private refIds = Dictionary<SerializableType ref, int>(HashIdentity.Reference)
+
+let private idOf (r: SerializableType ref) =
+    match refIds.TryGetValue r with
+    | true, id -> id
+    | _ ->
+        let id = refIds.Count
+        refIds.Add(r, id)
+        id
+
+let private basicTypeMap =
+    Map
+        [ typeof<bool>.FullName, BasicType.Bool
+          typeof<char>.FullName, BasicType.Char
+          typeof<int8>.FullName, BasicType.Int8
+          typeof<int16>.FullName, BasicType.Int16
+          typeof<int32>.FullName, BasicType.Int32
+          typeof<int64>.FullName, BasicType.Int64
+          typeof<uint8>.FullName, BasicType.UInt8
+          typeof<uint16>.FullName, BasicType.UInt16
+          typeof<uint32>.FullName, BasicType.UInt32
+          typeof<uint64>.FullName, BasicType.UInt64
+          typeof<single>.FullName, BasicType.Single
+          typeof<double>.FullName, BasicType.Double
+          typeof<string>.FullName, BasicType.String
+          typeof<Guid>.FullName, BasicType.Guid
+          typeof<DateTime>.FullName, BasicType.DateTime
+          typeof<TimeSpan>.FullName, BasicType.TimeSpan
+          typeof<unit>.FullName, BasicType.Unit ]
+
+let private typeToTypeName (typ: FSharpType) : string<typeName> =
+    if typ.HasTypeDefinition then
+        %(typ.TypeDefinition :> FSharpSymbol).FullName
+    else
+        %typ.BasicQualifiedName
+
+let private handleGenericType genericTypeArgs (typ: FSharpType) =
+    if not typ.IsGenericParameter then
+        typ |> typeFromFsharpType genericTypeArgs
+    else
+        match genericTypeArgs |> Map.tryFind typ.GenericParameter.Name with
+        | None -> failwith $"Could not find generic type argument for {typ}"
+        | Some actualType -> actualType
+
+let private mapRecordFields genericTypeArgs (fields: FSharpField seq) =
+    // TODO: Handle attributes
+    fields
+    |> Seq.filter (fun f -> not f.IsStatic)
+    |> Seq.map (fun f ->
+        { name = f.Name
+          fieldType = f.FieldType |> handleGenericType genericTypeArgs
+          defaultValue = None })
+    |> Seq.toList
+
+/// The generic arguments of the type in declaration order, and the bindings in scope
+/// extended with them by parameter name.
+let private getGenericTypeArgs genericTypeArgs (typ: FSharpType) =
+    let genericArgs = typ.TypeDefinition.GenericArguments
+    let genericParams = typ.TypeDefinition.GenericParameters
+
+    if genericArgs.Count <> genericParams.Count then
+        failwith
+            $"Generic arguments and parameters count mismatch for {typ}. This probably means not all generic arguments were specified, which is not supported."
+
+    let ordered =
+        genericParams
+        |> Seq.mapi (fun i p -> p.Name, genericArgs[i] |> handleGenericType genericTypeArgs)
+        |> Seq.toList
+
+    ordered |> List.map snd, ordered |> List.fold (fun acc (k, v) -> Map.add k v acc) genericTypeArgs
+
+let private mapRecord genericTypeArgs (typ: FSharpType) =
+    let typeArgs, genericTypeArgs = typ |> getGenericTypeArgs genericTypeArgs
+
+    SerializableType.Record
+        { name = typ |> typeToTypeName
+          typeArgs = typeArgs
+          fields = typ.TypeDefinition.FSharpFields |> mapRecordFields genericTypeArgs }
+
+let private mapUnion genericTypeArgs (typ: FSharpType) =
+    let typeArgs, genericTypeArgs = typ |> getGenericTypeArgs genericTypeArgs
+
+    SerializableType.Union
+        { name = typ |> typeToTypeName
+          typeArgs = typeArgs
+          cases =
+            [ for uc in typ.TypeDefinition.UnionCases ->
+                  { name = uc.Name
+                    fields = uc.Fields |> mapRecordFields genericTypeArgs } ] }
+
+let private mapEnum (typ: FSharpType) =
+    // TODO: Handle attributes
+    let values =
+        [ for f in typ.TypeDefinition.FSharpFields do
+              if f.IsStatic && f.LiteralValue.IsSome then
+                  { name = f.Name
+                    value = f.LiteralValue.Value } ]
+
+    let underlying = values.Head.value.GetType().FullName
+
+    SerializableType.Enum
+        { name = typ |> typeToTypeName
+          values = values
+          valueType =
+            match basicTypeMap |> Map.tryFind underlying with
+            | Some t -> t
+            | None -> failwith $"Enum {typ} uses an unsupported type as its underlying type: {underlying}" }
+
+/// Interfaces are not serialized themselves. Only their members' argument and return types are collected.
+let private collectInterfaceMembers genericTypeArgs (typ: FSharpType) =
+    for memb in typ.TypeDefinition.MembersFunctionsAndValues do
+        let args = memb.FullType.GenericArguments[0]
+        let returnType = memb.FullType.GenericArguments[1]
+
+        args |> typeFromFsharpType genericTypeArgs |> ignore
+        returnType |> typeFromFsharpType genericTypeArgs |> ignore
+
+let private hasAttribute (attribute: Type) (entity: FSharpEntity) =
+    entity.Attributes
+    |> Seq.exists (fun a -> a.AttributeType.TryGetFullName() = Some attribute.FullName)
+
+/// Wrappers that stand for their type argument: asynchronous results, and anything marked FasonUnwrap.
+let private unwrappedByDefault =
+    set
+        [ "System.Threading.Tasks.Task`1"
+          "System.Threading.Tasks.ValueTask`1"
+          "Microsoft.FSharp.Control.FSharpAsync`1" ]
+
+let private isUnwrapped (typ: FSharpType) =
+    typ.HasTypeDefinition
+    && (hasAttribute typeof<FasonUnwrapAttribute> typ.TypeDefinition
+        || (typ.TypeDefinition.TryFullName |> Option.exists unwrappedByDefault.Contains))
+
+let private typeFromFsharpType (genericTypeArgs: Map<string, SerializableType ref>) (typ: FSharpType) =
+    let stripped = typ.StripAbbreviations()
+
+    if isUnwrapped typ || isUnwrapped stripped then
+        stripped.GenericArguments[0] |> handleGenericType genericTypeArgs
+    else
+
+        let typ = stripped
+        let key = typ, (genericTypeArgs |> Map.toList |> List.map (snd >> idOf))
+
+        match types.TryGetValue key with
+        | true, existing -> existing
+        | _ ->
+            // Register the ref before mapping so recursive types terminate.
+            let typRef = ref (SerializableType.Basic BasicType.Unit)
+            types.Add(key, typRef)
+
+            let arg i =
+                typ.GenericArguments[i] |> handleGenericType genericTypeArgs
+
+            let named = typ.HasTypeDefinition
+            let definition = if named then Some typ.TypeDefinition else None
+
+            typRef.Value <-
+                match
+                    definition
+                    |> Option.bind (fun d ->
+                        if d.IsArrayType then
+                            None
+                        else
+                            basicTypeMap.TryFind typ.BasicQualifiedName)
+                with
+                | Some basic -> SerializableType.Basic basic
+                | None when typ.GenericArguments.Count > 0 && typ.GenericArguments[0].IsMeasureType ->
+                    SerializableType.UnitOfMeasure
+                        { baseType = typ.ErasedType |> handleGenericType genericTypeArgs
+                          unitOfMeasure = typ.GenericArguments[0] |> typeToTypeName }
+                | None when typ.IsAnonRecordType ->
+                    // TODO: Handle attributes
+                    SerializableType.AnonymousRecord
+                        { fields =
+                            [ for i, name in typ.AnonRecordTypeDetails.SortedFieldNames |> Seq.indexed ->
+                                  { name = name
+                                    fieldType = arg i
+                                    defaultValue = None } ] }
+                | None when typ.IsTupleType ->
+                    // TODO: Handle attributes
+                    SerializableType.Tuple
+                        { values =
+                            [ for i in 0 .. typ.GenericArguments.Count - 1 ->
+                                  { valueType = arg i
+                                    defaultValue = None } ] }
+                | None ->
+                    match definition with
+                    | Some d when d.CompiledName = "FSharpOption`1" -> SerializableType.Optional(arg 0)
+                    | Some d when d.CompiledName = "FSharpList`1" -> SerializableType.List(arg 0)
+                    | Some d when d.CompiledName = "FSharpSet`1" -> SerializableType.Set(arg 0)
+                    | Some d when d.CompiledName = "FSharpMap`2" -> SerializableType.Map(arg 0, arg 1)
+                    | Some d when d.IsFSharpRecord -> mapRecord genericTypeArgs typ
+                    | Some d when d.IsFSharpUnion -> mapUnion genericTypeArgs typ
+                    | Some d when d.IsEnum -> mapEnum typ
+                    | Some d when d.IsArrayType -> SerializableType.Array(arg 0)
+                    | Some d when d.IsInterface ->
+                        collectInterfaceMembers genericTypeArgs typ
+                        SerializableType.Basic BasicType.Unit
+                    | _ -> failwith $"Unsupported type {typ}"
+
+            typRef
+
+let rec private collectAll (entity: FSharpEntity) =
+    // Open generic definitions are reached through their instantiations, and unwrapped
+    // wrappers only stand for their argument. Neither has a codec of its own.
+    let skipped =
+        entity.IsFSharpModule
+        || entity.IsMeasure
+        || entity.GenericParameters.Count > 0
+        || hasAttribute typeof<FasonUnwrapAttribute> entity
+
+    if not skipped then
+        try
+            entity.AsType() |> typeFromFsharpType Map.empty |> ignore
+        with ex ->
+            eprintfn $"Unsupported entity {entity}: {ex.Message}"
+
+    for child in entity.NestedEntities do
+        collectAll child
+
+/// Collects the entities carrying the FasonSerializable attribute, together with
+/// everything nested in them.
+let rec collectFrom (entity: FSharpEntity) =
+    if hasAttribute typeof<FasonSerializableAttribute> entity then
+        collectAll entity
+    else
+        for child in entity.NestedEntities do
+            collectFrom child
+
+let getSerializableTypes () = types |> Seq.map _.Value |> Seq.toArray

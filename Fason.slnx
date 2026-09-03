@@ -1,6 +1,7 @@
 ﻿<Solution>
-    <Project Path="Fason.Lib\Fason.Lib.fsproj" Type="Classic F#"/>
-    <Project Path="Fason.TestLib\Fason.TestLib.fsproj" Type="Classic F#"/>
     <Project Path="Fason\Fason.fsproj" Type="Classic F#"/>
+    <Project Path="Fason.TestLib\Fason.TestLib.fsproj" Type="Classic F#"/>
+    <Project Path="Fason.TestLib.Fable\Fason.TestLib.Fable.fsproj" Type="Classic F#"/>
+    <Project Path="Fason.Tool\Fason.Tool.fsproj" Type="Classic F#"/>
     <Project Path="Fason.Tests\Fason.Tests.fsproj" Type="Classic F#"/>
 </Solution>

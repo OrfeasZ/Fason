@@ -15,7 +15,7 @@ type RadixTreeTests() =
               isLeaf = false
               children = [] }
 
-        Assert.AreEqual(expected, tree.root)
+        Assert.AreEqual(expected, tree)
 
     [<Test>]
     member _.``Single string tree after sort should have correct structure``() =
@@ -29,27 +29,27 @@ type RadixTreeTests() =
                     isLeaf = true
                     children = [] } ] }
 
-        Assert.AreEqual(expected, tree.root)
+        Assert.AreEqual(expected, tree)
 
     [<Test>]
-    member _.``Multiple unrelated strings should be sorted alphabetically``() =
+    member _.``Multiple unrelated strings should be sorted by length then alphabetically``() =
         let tree = RadixTree.fromStrings [ "dog"; "cat"; "bird" ] |> RadixTree.sort
 
         let expected =
             { data = ""
               isLeaf = false
               children =
-                [ { data = "bird"
-                    isLeaf = true
-                    children = [] }
-                  { data = "cat"
+                [ { data = "cat"
                     isLeaf = true
                     children = [] }
                   { data = "dog"
                     isLeaf = true
+                    children = [] }
+                  { data = "bird"
+                    isLeaf = true
                     children = [] } ] }
 
-        Assert.AreEqual(expected, tree.root)
+        Assert.AreEqual(expected, tree)
 
     [<Test>]
     member _.``Strings with common prefix should have sorted children``() =
@@ -69,7 +69,7 @@ type RadixTreeTests() =
                           isLeaf = true
                           children = [] } ] } ] }
 
-        Assert.AreEqual(expected, tree.root)
+        Assert.AreEqual(expected, tree)
 
     [<Test>]
     member _.``Complex tree with multiple levels should be fully sorted``() =
@@ -77,7 +77,6 @@ type RadixTreeTests() =
             RadixTree.fromStrings [ "romulus"; "romane"; "romanus"; "rubicon"; "rubens"; "rubicundus" ]
             |> RadixTree.sort
 
-        // The actual structure based on how the radix tree works
         let expected =
             { data = ""
               isLeaf = false
@@ -103,10 +102,7 @@ type RadixTreeTests() =
                         { data = "ub"
                           isLeaf = false
                           children =
-                            [ { data = "ens"
-                                isLeaf = true
-                                children = [] }
-                              { data = "ic"
+                            [ { data = "ic"
                                 isLeaf = false
                                 children =
                                   [ { data = "on"
@@ -114,9 +110,12 @@ type RadixTreeTests() =
                                       children = [] }
                                     { data = "undus"
                                       isLeaf = true
-                                      children = [] } ] } ] } ] } ] }
+                                      children = [] } ] }
+                              { data = "ens"
+                                isLeaf = true
+                                children = [] } ] } ] } ] }
 
-        Assert.AreEqual(expected, tree.root)
+        Assert.AreEqual(expected, tree)
 
     [<Test>]
     member _.``Tree with prefix relationships should maintain sorted order``() =
@@ -124,7 +123,6 @@ type RadixTreeTests() =
             RadixTree.fromStrings [ "application"; "app"; "apply"; "apple" ]
             |> RadixTree.sort
 
-        // The actual structure - "apply" creates "appl" + "y", not "app" + "ly"
         let expected =
             { data = ""
               isLeaf = false
@@ -138,14 +136,14 @@ type RadixTreeTests() =
                             [ { data = "e"
                                 isLeaf = true
                                 children = [] }
-                              { data = "ication"
+                              { data = "y"
                                 isLeaf = true
                                 children = [] }
-                              { data = "y"
+                              { data = "ication"
                                 isLeaf = true
                                 children = [] } ] } ] } ] }
 
-        Assert.AreEqual(expected, tree.root)
+        Assert.AreEqual(expected, tree)
 
     [<Test>]
     member _.``Single character strings should be sorted correctly``() =
@@ -165,13 +163,13 @@ type RadixTreeTests() =
                     isLeaf = true
                     children = [] } ] }
 
-        Assert.AreEqual(expected, tree.root)
+        Assert.AreEqual(expected, tree)
 
     [<Test>]
     member _.``Length sorting should work correctly``() =
         let tree =
             RadixTree.fromStrings [ "small"; "smaller"; "smile"; "address"; "ad"; "banana"; "sad" ]
-            |> RadixTree.sortByLength
+            |> RadixTree.sort
 
         let expected =
             { data = ""
@@ -205,4 +203,4 @@ type RadixTreeTests() =
                     isLeaf = true
                     children = [] } ] }
 
-        Assert.AreEqual(expected, tree.root)
+        Assert.AreEqual(expected, tree)

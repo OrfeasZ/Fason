@@ -398,3 +398,6 @@ FodyWeavers.xsd
 
 # JetBrains Rider
 *.sln.iml
+
+Fason.TestLib.Fable/out/
+Fason.Generated.fs

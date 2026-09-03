@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-ci.$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
+          fi
+
+      - run: dotnet tool restore
+      - run: dotnet restore Fason.slnx
+
+      - name: Generate the test library codecs
+        run: |
+          dotnet run --project Fason.Tool/Fason.Tool.fsproj -c Release --property:Version=${{ steps.version.outputs.version }} -- Fason.TestLib/Fason.TestLib.fsproj --configuration Release
+
+      - run: dotnet build Fason.slnx -c Release -p:Version=${{ steps.version.outputs.version }}
+
+      - name: Test on .NET
+        run: dotnet run --project Fason.TestLib/Fason.TestLib.fsproj -c Release --no-build
+
+      - name: Test on node
+        run: |
+          dotnet fable Fason.TestLib.Fable/Fason.TestLib.Fable.fsproj -o Fason.TestLib.Fable/out
+          node Fason.TestLib.Fable/out/Fason.TestLib/Program.js
+
+      - run: dotnet test Fason.Tests/Fason.Tests.fsproj -c Release --no-build
+
+      - name: Pack
+        run: |
+          dotnet pack Fason/Fason.fsproj -c Release --no-build -o artifacts -p:Version=${{ steps.version.outputs.version }}
+          dotnet pack Fason.Tool/Fason.Tool.fsproj -c Release --no-build -o artifacts -p:Version=${{ steps.version.outputs.version }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: artifacts/*.nupkg
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: artifacts
+
+      - name: NuGet login (OIDC trusted publishing)
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: orfeasz
+
+      - name: Push packages
+        run: |
+          for pkg in artifacts/*.nupkg; do
+            dotnet nuget push "$pkg" \
+              --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" \
+              --source https://api.nuget.org/v3/index.json \
+              --skip-duplicate
+          done
