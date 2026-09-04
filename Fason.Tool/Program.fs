@@ -4,6 +4,7 @@ open System.IO
 open System.Threading
 open FSharp.Compiler.CodeAnalysis
 open FSharp.Compiler.Diagnostics
+open FSharp.Compiler.Symbols
 open FSharp.Compiler.Text
 open Fason
 open Ionide.ProjInfo
@@ -42,6 +43,7 @@ let attributeName = "FasonSerializable"
 
 type Target =
     { projectPath: string
+      name: string
       ns: string
       outputPath: string
       options: FSharpProjectOptions }
@@ -63,7 +65,7 @@ let writeIfChanged (path: string) (content: string) =
 
 let generate (hermes: bool) (checker: FSharpChecker) (target: Target) =
     match lastAnnotatedFile target.options.SourceFiles with
-    | None -> Log.info $"{target.projectPath}: no file mentions {attributeName}, nothing generated."
+    | None -> Log.info $"{target.name}: no file mentions {attributeName}, nothing generated."
     | Some file ->
         let started = Diagnostics.Stopwatch.StartNew()
         let source = SourceText.ofString (File.ReadAllText file)
@@ -73,26 +75,29 @@ let generate (hermes: bool) (checker: FSharpChecker) (target: Target) =
             |> Async.RunSynchronously
 
         match answer with
-        | FSharpCheckFileAnswer.Aborted -> Log.error $"{target.projectPath}: type check aborted."
+        | FSharpCheckFileAnswer.Aborted -> Log.error $"{target.name}: type check aborted."
         | FSharpCheckFileAnswer.Succeeded result ->
             for diagnostic in result.Diagnostics do
                 if diagnostic.Severity = FSharpDiagnosticSeverity.Error then
-                    Log.error $"[fcs] {target.projectPath}: {diagnostic}"
+                    Log.error $"[fcs] {target.name}: {diagnostic}"
 
             TypeCollector.reset ()
 
             for entity in result.PartialAssemblySignature.Entities do
                 TypeCollector.collectFrom entity
 
-            for typ, reason in TypeCollector.getSkipped () do
-                Log.warning $"{target.projectPath}: Skipping {typ}: {reason}"
+            let projectDir = Path.GetDirectoryName target.projectPath
+
+            for typ, location, message in TypeCollector.getSkipped () do
+                let file = Path.GetRelativePath(projectDir, location.FileName)
+                let name = typ.Format FSharpDisplayContext.Empty
+                Log.warning $"{target.name}: Skipping {name} ({file}:{location.StartLine}): {message}"
 
             let serializableTypes = TypeCollector.getSerializableTypes ()
             let code = JsonEncoderCodegen.generate (serializableTypes, target.ns, hermes)
             let status = writeIfChanged target.outputPath code
 
-            Log.info
-                $"{target.projectPath}: {serializableTypes.Length} types, {started.ElapsedMilliseconds} ms, {status}."
+            Log.info $"{target.name}: {serializableTypes.Length} types, {started.ElapsedMilliseconds} ms, {status}."
 
 let main (argv: string array) =
     let hermes = argv |> Array.contains "--hermes"
@@ -136,6 +141,7 @@ let main (argv: string array) =
                 |> Option.defaultValue projectDir
 
         { projectPath = projectPath
+          name = Path.GetFileNameWithoutExtension projectPath
           ns =
             option "--namespace"
             |> Option.orElse (property "FasonNamespace")
@@ -192,7 +198,7 @@ let main (argv: string array) =
                 try
                     generate hermes checker target
                 with ex ->
-                    Log.error $"{target.projectPath}: {ex.Message}"
+                    Log.error $"{target.name}: {ex.Message}"
 
         generateAll targets
 

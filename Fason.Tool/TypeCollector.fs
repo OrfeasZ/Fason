@@ -4,6 +4,7 @@ open System
 open System.Collections.Generic
 open FSharp.Compiler.Symbols
 open FSharp.Compiler.Syntax
+open FSharp.Compiler.Text
 open FSharp.UMX
 
 /// A basic "built-in" type.
@@ -119,8 +120,34 @@ let private types = Dictionary<FSharpType * int list, SerializableType ref>()
 /// Keys of `types` in registration order, so a failed mapping can discard everything it registered.
 let private registered = List<FSharpType * int list>()
 
-/// Types dropped for being unsupported, with the reason.
-let private skipped = List<FSharpType * string>()
+/// A member whose type has no codec and where it is declared, and why.
+exception UnsupportedMember of location: range * message: string
+
+/// A declared type that was dropped.
+exception SkippedType of FSharpType
+
+/// Declared types dropped for being unsupported and where, and why.
+let private skipped = List<FSharpType * range * string>()
+
+/// What each failed type raised, so a later dependent gets the same failure without
+/// mapping and logging the type again.
+let private failed = Dictionary<FSharpType * int list, exn>()
+
+let private typeText (typ: FSharpType) = typ.Format FSharpDisplayContext.Empty
+
+/// The reason a member's type has no codec.
+let private reasonOf (ex: exn) =
+    match ex with
+    | SkippedType typ -> $"{typeText typ} was skipped"
+    | UnsupportedMember(_, message) -> message
+    | _ -> ex.Message
+
+/// Runs `map` for a member, and reports a failure with the member's name and location.
+let private forMember (kind: string) (name: string) (location: range) (map: unit -> 'a) =
+    try
+        map ()
+    with ex ->
+        raise (UnsupportedMember(location, $"{kind} {name}: {reasonOf ex}"))
 
 let private refIds = Dictionary<SerializableType ref, int>(HashIdentity.Reference)
 
@@ -209,7 +236,8 @@ let private mapRecordFields genericTypeArgs (fields: FSharpField seq) =
     |> Seq.filter (fun f -> not f.IsStatic)
     |> Seq.map (fun f ->
         { name = f.Name
-          fieldType = f.FieldType |> handleGenericType genericTypeArgs
+          fieldType =
+            forMember "field" f.Name f.DeclarationLocation (fun () -> f.FieldType |> handleGenericType genericTypeArgs)
           defaultValue = None })
     |> Seq.toList
 
@@ -292,7 +320,7 @@ let private collectInterfaceMembers genericTypeArgs (typ: FSharpType) =
             t |> typeFromFsharpType genericTypeArgs |> ignore
 
     for memb in typ.TypeDefinition.MembersFunctionsAndValues do
-        collect memb.FullType
+        forMember "member" memb.DisplayName memb.DeclarationLocation (fun () -> collect memb.FullType)
 
 let private hasAttribute (attribute: Type) (entity: FSharpEntity) =
     entity.Attributes
@@ -322,6 +350,7 @@ let private typeFromFsharpType (genericTypeArgs: Map<string, SerializableType re
 
         match types.TryGetValue key with
         | true, existing -> existing
+        | _ when failed.ContainsKey key -> raise failed[key]
         | _ ->
             // Register the ref before mapping so recursive types terminate.
             let typRef = ref (SerializableType.Basic BasicType.Unit)
@@ -378,16 +407,39 @@ let private typeFromFsharpType (genericTypeArgs: Map<string, SerializableType re
                         | Some d when d.IsInterface ->
                             collectInterfaceMembers genericTypeArgs typ
                             SerializableType.Basic BasicType.Unit
-                        | _ -> failwith $"Unsupported type {typ}"
+                        | _ ->
+                            let kind =
+                                match definition with
+                                | Some d when d.IsDelegate -> "a delegate"
+                                | Some d when d.IsClass -> "a class"
+                                | Some d when d.IsValueType -> "a struct"
+                                | Some _ -> "not a supported kind of type"
+                                | None when typ.IsFunctionType -> "a function"
+                                | None when typ.IsGenericParameter -> "a generic parameter"
+                                | None -> "not a supported kind of type"
+
+                            failwith $"{typeText typ} is {kind}, which is not supported"
 
             with ex ->
-                skipped.Add((typ, ex.Message))
-
                 for i in mark .. registered.Count - 1 do
                     types.Remove registered[i] |> ignore
 
                 registered.RemoveRange(mark, registered.Count - mark)
-                reraise ()
+
+                let raised =
+                    match definition with
+                    | Some d when d.IsFSharpRecord || d.IsFSharpUnion || d.IsEnum || d.IsInterface ->
+                        let location, message =
+                            match ex with
+                            | UnsupportedMember(location, message) -> location, message
+                            | _ -> d.DeclarationLocation, ex.Message
+
+                        skipped.Add((typ, location, message))
+                        SkippedType typ
+                    | _ -> ex
+
+                failed[key] <- raised
+                raise raised
 
             typRef
 
@@ -426,4 +478,5 @@ let reset () =
     types.Clear()
     registered.Clear()
     skipped.Clear()
+    failed.Clear()
     refIds.Clear()
