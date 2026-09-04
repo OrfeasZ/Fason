@@ -1,4 +1,4 @@
-module rec Fason.TypeCollector
+﻿module rec Fason.TypeCollector
 
 open System
 open System.Collections.Generic
@@ -336,3 +336,7 @@ let rec collectFrom (entity: FSharpEntity) =
             collectFrom child
 
 let getSerializableTypes () = types |> Seq.map _.Value |> Seq.toArray
+
+let reset () =
+    types.Clear()
+    refIds.Clear()

@@ -1,8 +1,8 @@
 # Fason
 
 An F# code generator that generates optimized (and Thoth-compatible) JSON encoders and decoders for F# types, without
-using reflection. Only supports F# types and .NET primitives (e.g. records, tuples, DUs, collections). Compatible with
-Fable.
+using reflection. Only supports F# types (e.g. records, tuples, DUs, collections) and .NET primitives and core types
+(Guid, DateTime, TimeSpan). Compatible with Fable.
 
 ## Usage
 
@@ -23,26 +23,33 @@ type MyRecord = {
 ```
 
 To generate the encoders / decoders, run `dotnet fason MyProject.fsproj`, where `MyProject.fsproj` is the path to your
-F# project. This will create a `Fason.Generated.fs` file next to your project file. Include that file in your project,
-and then use the generated `Json.serialize`, `Json.deserialize<'T>`, `Json.serializeObj`, and `Json.deserializeObj` to
-convert your values between JSON and back. The `Obj`-suffixed methods take an `obj` and its `Type` instead of a concrete
-object, for cases where it might not be known at runtime.
+F# project. This will create a `Fason.Generated.fs` file next to your project file. You can pass several projects at
+once by separating them with spaces.
+
+Include the generated file in your project, and then use the generated `Json.serialize`, `Json.deserialize<'T>`,
+`Json.serializeObj`, and `Json.deserializeObj` to convert your values between JSON and back. The `Obj`-suffixed methods
+take an `obj` and its `Type` instead of a concrete object, for cases where it might not be known at runtime.
 
 ## Options
 
 The Fason tool has the following options:
 
 ```shell
-dotnet fason MyProject.fsproj [--namespace <name>] [--output <path>] [--configuration <name>] [--hermes] [--version]
+dotnet fason MyProject.fsproj... [--namespace <name>] [--output <path>] [--configuration <name>] [--hermes] [--watch] [--version]
 ```
 
-| Option                   | Description                                                                                                       |
-|--------------------------|-------------------------------------------------------------------------------------------------------------------|
-| `--namespace <name>`     | Allows specifying the namespace the generated F# code will be put under.                                          |
-| `--output <path>`        | Specify the path the generated code will be placed under. Can be a directory or a full path with a filename.      |
-| `--configuration <name>` | Build configuration the project is loaded with (default: Debug). Referenced projects must already be built in it. |
-| `--hermes`               | Optimize the generated code for usage with the Hermes JS engine (probably also helps with other JS interpreters). |
-| `--version`              | Print the tool version and exit.                                                                                  |
+| Option                   | Description                                                                                                                       |
+|--------------------------|-----------------------------------------------------------------------------------------------------------------------------------|
+| `--namespace <name>`     | Allows specifying the namespace the generated F# code will be put under. Single project only.                                     |
+| `--output <path>`        | Specify the path the generated code will be placed under. Can be a directory or a full path with a filename. Single project only. |
+| `--configuration <name>` | Build configuration the project is loaded with (default: Debug). Referenced projects must already be built in it.                 |
+| `--hermes`               | Optimize the generated code for usage with the Hermes JS engine (probably also helps with other JS interpreters).                 |
+| `--watch`                | Keep running and regenerate whenever a source file of a loaded project changes.                                                   |
+| `--version`              | Print the tool version and exit.                                                                                                  |
+
+Instead of `--namespace` and `--output`, a project can set the `FasonNamespace` and `FasonOutput` MSBuild properties.
+A relative `FasonOutput` is resolved against the project directory. This is the way to configure several projects
+in one run.
 
 ## Benchmarks
 
