@@ -417,6 +417,16 @@ let realMain argv =
         ""
 #endif
 
+    for typ in [ typeof<TestUnsupported>; typeof<TestDependsOnUnsupported> ] do
+        let registered =
+            try
+                Json.codecFor typ |> ignore
+                true
+            with _ ->
+                false
+
+        check $"no codec for {typ.Name}" (not registered) "a codec was generated"
+
     if failures = 0 then
         printfn "All tests passed."
         0

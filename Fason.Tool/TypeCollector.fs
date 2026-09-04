@@ -106,6 +106,9 @@ type SerializableType =
 /// Collection of all types that are serializable, that we've collected so far.
 let private types = Dictionary<FSharpType * int list, SerializableType ref>()
 
+/// Keys of `types` in registration order, so a failed mapping can discard everything it registered.
+let private registered = List<FSharpType * int list>()
+
 let private refIds = Dictionary<SerializableType ref, int>(HashIdentity.Reference)
 
 let private idOf (r: SerializableType ref) =
@@ -254,7 +257,9 @@ let private typeFromFsharpType (genericTypeArgs: Map<string, SerializableType re
         | _ ->
             // Register the ref before mapping so recursive types terminate.
             let typRef = ref (SerializableType.Basic BasicType.Unit)
+            let mark = registered.Count
             types.Add(key, typRef)
+            registered.Add key
 
             let arg i =
                 typ.GenericArguments[i] |> handleGenericType genericTypeArgs
@@ -262,49 +267,59 @@ let private typeFromFsharpType (genericTypeArgs: Map<string, SerializableType re
             let named = typ.HasTypeDefinition
             let definition = if named then Some typ.TypeDefinition else None
 
-            typRef.Value <-
-                match
-                    definition
-                    |> Option.bind (fun d ->
-                        if d.IsArrayType then
-                            None
-                        else
-                            basicTypeMap.TryFind typ.BasicQualifiedName)
-                with
-                | Some basic -> SerializableType.Basic basic
-                | None when typ.GenericArguments.Count > 0 && typ.GenericArguments[0].IsMeasureType ->
-                    SerializableType.UnitOfMeasure
-                        { baseType = typ.ErasedType |> handleGenericType genericTypeArgs
-                          unitOfMeasure = typ.GenericArguments[0] |> typeToTypeName }
-                | None when typ.IsAnonRecordType ->
-                    // TODO: Handle attributes
-                    SerializableType.AnonymousRecord
-                        { fields =
-                            [ for i, name in typ.AnonRecordTypeDetails.SortedFieldNames |> Seq.indexed ->
-                                  { name = name
-                                    fieldType = arg i
-                                    defaultValue = None } ] }
-                | None when typ.IsTupleType ->
-                    // TODO: Handle attributes
-                    SerializableType.Tuple
-                        { values =
-                            [ for i in 0 .. typ.GenericArguments.Count - 1 ->
-                                  { valueType = arg i
-                                    defaultValue = None } ] }
-                | None ->
-                    match definition with
-                    | Some d when d.CompiledName = "FSharpOption`1" -> SerializableType.Optional(arg 0)
-                    | Some d when d.CompiledName = "FSharpList`1" -> SerializableType.List(arg 0)
-                    | Some d when d.CompiledName = "FSharpSet`1" -> SerializableType.Set(arg 0)
-                    | Some d when d.CompiledName = "FSharpMap`2" -> SerializableType.Map(arg 0, arg 1)
-                    | Some d when d.IsFSharpRecord -> mapRecord genericTypeArgs typ
-                    | Some d when d.IsFSharpUnion -> mapUnion genericTypeArgs typ
-                    | Some d when d.IsEnum -> mapEnum typ
-                    | Some d when d.IsArrayType -> SerializableType.Array(arg 0)
-                    | Some d when d.IsInterface ->
-                        collectInterfaceMembers genericTypeArgs typ
-                        SerializableType.Basic BasicType.Unit
-                    | _ -> failwith $"Unsupported type {typ}"
+            try
+                typRef.Value <-
+                    match
+                        definition
+                        |> Option.bind (fun d ->
+                            if d.IsArrayType then
+                                None
+                            else
+                                basicTypeMap.TryFind typ.BasicQualifiedName)
+                    with
+                    | Some basic -> SerializableType.Basic basic
+                    | None when typ.GenericArguments.Count > 0 && typ.GenericArguments[0].IsMeasureType ->
+                        SerializableType.UnitOfMeasure
+                            { baseType = typ.ErasedType |> handleGenericType genericTypeArgs
+                              unitOfMeasure = typ.GenericArguments[0] |> typeToTypeName }
+                    | None when typ.IsAnonRecordType ->
+                        // TODO: Handle attributes
+                        SerializableType.AnonymousRecord
+                            { fields =
+                                [ for i, name in typ.AnonRecordTypeDetails.SortedFieldNames |> Seq.indexed ->
+                                      { name = name
+                                        fieldType = arg i
+                                        defaultValue = None } ] }
+                    | None when typ.IsTupleType ->
+                        // TODO: Handle attributes
+                        SerializableType.Tuple
+                            { values =
+                                [ for i in 0 .. typ.GenericArguments.Count - 1 ->
+                                      { valueType = arg i
+                                        defaultValue = None } ] }
+                    | None ->
+                        match definition with
+                        | Some d when d.CompiledName = "FSharpOption`1" -> SerializableType.Optional(arg 0)
+                        | Some d when d.CompiledName = "FSharpList`1" -> SerializableType.List(arg 0)
+                        | Some d when d.CompiledName = "FSharpSet`1" -> SerializableType.Set(arg 0)
+                        | Some d when d.CompiledName = "FSharpMap`2" -> SerializableType.Map(arg 0, arg 1)
+                        | Some d when d.IsFSharpRecord -> mapRecord genericTypeArgs typ
+                        | Some d when d.IsFSharpUnion -> mapUnion genericTypeArgs typ
+                        | Some d when d.IsEnum -> mapEnum typ
+                        | Some d when d.IsArrayType -> SerializableType.Array(arg 0)
+                        | Some d when d.IsInterface ->
+                            collectInterfaceMembers genericTypeArgs typ
+                            SerializableType.Basic BasicType.Unit
+                        | _ -> failwith $"Unsupported type {typ}"
+
+            with ex ->
+                eprintfn $"Skipping {typ}: {ex.Message}"
+
+                for i in mark .. registered.Count - 1 do
+                    types.Remove registered[i] |> ignore
+
+                registered.RemoveRange(mark, registered.Count - mark)
+                reraise ()
 
             typRef
 
@@ -320,8 +335,8 @@ let rec private collectAll (entity: FSharpEntity) =
     if not skipped then
         try
             entity.AsType() |> typeFromFsharpType Map.empty |> ignore
-        with ex ->
-            eprintfn $"Unsupported entity {entity}: {ex.Message}"
+        with _ ->
+            ()
 
     for child in entity.NestedEntities do
         collectAll child
@@ -339,4 +354,5 @@ let getSerializableTypes () = types |> Seq.map _.Value |> Seq.toArray
 
 let reset () =
     types.Clear()
+    registered.Clear()
     refIds.Clear()

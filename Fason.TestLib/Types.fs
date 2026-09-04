@@ -216,6 +216,14 @@ module TestModule =
           f33: int option
           f34: int }
 
+    /// Gets no codec: a class field is unsupported.
+    type TestUnsupported =
+        { name: string
+          stream: System.IO.Stream }
+
+    /// Gets no codec either, since it depends on TestUnsupported.
+    type TestDependsOnUnsupported = { inner: TestUnsupported; ok: bool }
+
 module TestModule2 =
     type TestModule.TestUnion with
         member self.otherName = self.ToString()
