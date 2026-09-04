@@ -189,6 +189,32 @@ let realMain argv =
         timeOnly
         """{"time":"12:34:56.7890000","times":["00:00:00.0000000","23:59:59.0000000"]}"""
 
+    let keywordNames =
+        { ``base`` = 1
+          ``with space`` = "s"
+          ``type`` = Some true
+          ``anon`` = {| ``member`` = 2 |}
+          ``case`` = ``Match`` (3, "w")
+          ``enum`` = TestKeywordEnum.``Two Words`` }
+
+    roundTrip "keyword names" keywordNames
+
+    roundTrip
+        "keyword names, other case"
+        { keywordNames with
+            ``case`` = ``Two Words`` 4
+            ``enum`` = TestKeywordEnum.``type`` }
+
+    thothCompatible "thoth: keyword names" keywordNames
+
+    let keywordTypes =
+        { odd = { v = 1 }
+          oddUnion = ``Odd Module``.``Odd Union`` { v = 2 }
+          measured = 3<``Odd Module``.``odd measure``> }
+
+    roundTrip "keyword types" keywordTypes
+    thothCompatible "thoth: keyword types" keywordTypes
+
     let dateTimeOffset =
         { at = DateTimeOffset(2026, 9, 5, 12, 34, 56, 789, TimeSpan.FromHours 2.0) }
 
@@ -243,6 +269,13 @@ let realMain argv =
 
     roundTrip "generic instantiations" testGenerics
     roundTrip "union case named like its type" (TestSameName(42UL, "node"))
+
+    for value in [ TestSameNameSibling 1; Sibling; Another "a" ] do
+        roundTrip $"union case named like its type, sibling: %A{value}" value
+
+    for value in [ TestQualified.First 1; TestQualified.Sibling ] do
+        roundTrip $"union with qualified access: %A{value}" value
+
     roundTrip "units of measure nested" testUomNested
     roundTrip "tuples nested" testTuplesNested
     roundTrip "unit" { nothing = (); list = [ (); () ] }

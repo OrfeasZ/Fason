@@ -3,6 +3,7 @@
 open System
 open System.Collections.Generic
 open FSharp.Compiler.Symbols
+open FSharp.Compiler.Syntax
 open FSharp.UMX
 
 /// A basic "built-in" type.
@@ -77,7 +78,8 @@ type UnionCase =
 type UnionType =
     { name: string<typeName>
       typeArgs: SerializableType ref list
-      cases: UnionCase list }
+      cases: UnionCase list
+      requireQualifiedAccess: bool }
 
 type EnumValue = { name: string; value: obj }
 
@@ -151,9 +153,23 @@ let private basicTypeMap =
           typeof<DateTimeOffset>.FullName, BasicType.DateTimeOffset
           typeof<unit>.FullName, BasicType.Unit ]
 
+let rec private entityName (entity: FSharpEntity) =
+    let own = PrettyNaming.NormalizeIdentifierBackticks entity.DisplayName
+
+    match entity.DeclaringEntity, entity.Namespace with
+    | Some parent, _ -> $"{entityName parent}.{own}"
+    | None, Some ns ->
+        let ns =
+            ns.Split('.')
+            |> Array.map PrettyNaming.NormalizeIdentifierBackticks
+            |> String.concat "."
+
+        $"{ns}.{own}"
+    | None, None -> own
+
 let private typeToTypeName (typ: FSharpType) : string<typeName> =
     if typ.HasTypeDefinition then
-        %(typ.TypeDefinition :> FSharpSymbol).FullName
+        %(entityName typ.TypeDefinition)
     else
         %typ.BasicQualifiedName
 
@@ -203,13 +219,27 @@ let private mapRecord genericTypeArgs (typ: FSharpType) =
 let private mapUnion genericTypeArgs (typ: FSharpType) =
     let typeArgs, genericTypeArgs = typ |> getGenericTypeArgs genericTypeArgs
 
+    let requireQualifiedAccess =
+        hasAttribute typeof<RequireQualifiedAccessAttribute> typ.TypeDefinition
+
+    // The compiler rejects `Module.Type.Case` in patterns when the case is named like the
+    // type, and RequireQualifiedAccess leaves no other qualified form.
+    if
+        requireQualifiedAccess
+        && typ.TypeDefinition.UnionCases
+           |> Seq.exists (fun uc -> uc.Name = typ.TypeDefinition.DisplayName)
+    then
+        failwith
+            $"Union {typ} has RequireQualifiedAccess and a case named like the type, which cannot be pattern matched from outside its module"
+
     SerializableType.Union
         { name = typ |> typeToTypeName
           typeArgs = typeArgs
           cases =
             [ for uc in typ.TypeDefinition.UnionCases ->
                   { name = uc.Name
-                    fields = uc.Fields |> mapRecordFields genericTypeArgs } ] }
+                    fields = uc.Fields |> mapRecordFields genericTypeArgs } ]
+          requireQualifiedAccess = requireQualifiedAccess }
 
 let private mapEnum (typ: FSharpType) =
     // TODO: Handle attributes

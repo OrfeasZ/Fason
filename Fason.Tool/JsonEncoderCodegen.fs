@@ -5,6 +5,7 @@ open System.Collections.Generic
 open Fason.TypeCollector
 open Fabulous.AST
 open type Fabulous.AST.Ast
+open FSharp.Compiler.Syntax
 open FSharp.UMX
 
 /// A radix tree over a set of strings. Given "small", "smaller", "smile", "address",
@@ -83,6 +84,11 @@ module private Emit =
     type Pattern = WidgetBuilder<Fantomas.Core.SyntaxOak.Pattern>
 
     let ident (name: string) : Expression = IdentExpr name
+
+    /// Forward an identifier for F#. Keywords and names with things like spaces get double backticks.
+    let codeName (name: string) =
+        PrettyNaming.NormalizeIdentifierBackticks name
+
     let str (value: string) : Expression = ConstantExpr(String value)
     let chr (value: char) : Expression = ConstantExpr(Char value)
     let int (value: int) : Expression = ConstantExpr(Int value)
@@ -218,7 +224,7 @@ module JsonEncoderCodegen =
         | SerializableType.AnonymousRecord r ->
             %("{| "
               + (r.fields
-                 |> List.map (fun f -> $"{f.name}: {name f.fieldType}")
+                 |> List.map (fun f -> $"{codeName f.name}: {name f.fieldType}")
                  |> String.concat "; ")
               + " |}")
         | SerializableType.Record r -> generic r.name r.typeArgs
@@ -234,11 +240,21 @@ module JsonEncoderCodegen =
         | SerializableType.UnitOfMeasure uom -> %($"{name uom.baseType}<{uom.unitOfMeasure}>")
         | SerializableType.Optional o -> %($"{name o} option")
 
-    /// Qualified name of a union case. When the case shares the type's name, `Type.Case`
-    /// resolves to the case itself, so the qualifier is dropped.
-    let private unionCaseName (typeName: string<typeName>) (caseName: string) =
-        if (string typeName).Split('.') |> Array.last = caseName then
-            string typeName
+    /// Qualified name of a union case. When a case shares the type's name, `Type.Other`
+    /// resolves `Type` to that case, so the cases go through the enclosing module instead.
+    /// RequireQualifiedAccess keeps the case out of the module's scope, and `Type.Case` works.
+    let private unionCaseName (typ: UnionType) (caseName: string) =
+        let caseName = codeName caseName
+        let typeName = string typ.name
+        let lastDot = typeName.LastIndexOf '.'
+        let ownName = typeName.Substring(lastDot + 1)
+        let shadowed = typ.cases |> List.exists (fun c -> codeName c.name = ownName)
+
+        if shadowed && not typ.requireQualifiedAccess then
+            if lastDot < 0 then
+                caseName
+            else
+                $"{typeName.Substring(0, lastDot)}.{caseName}"
         else
             $"{typeName}.{caseName}"
 
@@ -403,7 +419,7 @@ module JsonEncoderCodegen =
                       Code(
                           stmt (
                               matchOn
-                                  (ident $"value.{field.name}")
+                                  (ident $"value.{codeName field.name}")
                                   [ patCase "Some" [ "v" ], block (writes written); patNamed "None", unit ]
                           )
                       )
@@ -413,7 +429,7 @@ module JsonEncoderCodegen =
                   | _ ->
                       yield! separator
                       Plain name
-                      serialize field.fieldType (ident $"value.{field.name}")
+                      serialize field.fieldType (ident $"value.{codeName field.name}")
                       commaState <- Some true
 
               Plain "}" ]
@@ -435,7 +451,7 @@ module JsonEncoderCodegen =
                                 serialize field.fieldType (ident names[i])
                             Plain "]" ]
 
-                  patCase (unionCaseName typ.name case.name) names, block (writes body) ]
+                  patCase (unionCaseName typ case.name) names, block (writes body) ]
 
     let private tupleSerializer (typ: TupleType) =
         let names = typ.values |> List.mapi (fun i _ -> $"v{i}")
@@ -663,7 +679,7 @@ module JsonEncoderCodegen =
         let tree = fields |> List.map _.name |> RadixTree.fromStrings |> RadixTree.sort
 
         let recordFields =
-            [ for i, field in fields |> List.indexed -> RecordFieldExpr(field.name, ident $"f{i}") ]
+            [ for i, field in fields |> List.indexed -> RecordFieldExpr(codeName field.name, ident $"f{i}") ]
 
         let missingCheck =
             if useMask then
@@ -706,7 +722,7 @@ module JsonEncoderCodegen =
     let private unionDeserializer (typ: UnionType) =
         // Cases without fields are a plain string, cases with fields an array starting with the case name.
         let caseReader (case: UnionCase) =
-            let caseName = unionCaseName typ.name case.name
+            let caseName = unionCaseName typ case.name
 
             if case.fields.IsEmpty then
                 ident caseName
@@ -765,7 +781,7 @@ module JsonEncoderCodegen =
                           (matchOn
                               (reader "ReadString" [])
                               [ for v in typ.values do
-                                    patStr v.name, ident $"{typ.name}.{v.name}"
+                                    patStr v.name, ident $"{typ.name}.{codeName v.name}"
                                 patNamed "other", unknownName ])
                           fromNumber
                   ) ]
@@ -947,16 +963,16 @@ module JsonEncoderCodegen =
                   | SerializableType.Optional inner ->
                       stmt (
                           matchOn
-                              (ident $"value.{field.name}")
+                              (ident $"value.{codeName field.name}")
                               [ patCase "Some" [ "v" ], setField (toJs inner (ident "v"))
                                 patNamed "None", unit ]
                       )
-                  | _ -> stmt (setField (toJs field.fieldType (ident $"value.{field.name}")))
+                  | _ -> stmt (setField (toJs field.fieldType (ident $"value.{codeName field.name}")))
               stmt (ident "o") ]
 
     let private jsRecordFromJs (fields: RecordField list) (typeName: string<typeName>) (isAnonymous: bool) =
         let recordFields =
-            [ for i, field in fields |> List.indexed -> RecordFieldExpr(field.name, ident $"f{i}") ]
+            [ for i, field in fields |> List.indexed -> RecordFieldExpr(codeName field.name, ident $"f{i}") ]
 
         block
             [ letValue "o" (jsValue "toObject" [ ident "value" ])
@@ -987,7 +1003,7 @@ module JsonEncoderCodegen =
                   let names = case.fields |> List.mapi (fun i _ -> $"p{i}")
                   let tag = boxed (str case.name)
 
-                  patCase (unionCaseName typ.name case.name) names,
+                  patCase (unionCaseName typ case.name) names,
                   if case.fields.IsEmpty then
                       tag
                   else
@@ -1002,7 +1018,7 @@ module JsonEncoderCodegen =
         let unknown = patNamed "other", failWith "a known case" (boxed (ident "other"))
 
         let caseFromArray (case: UnionCase) =
-            let caseName = unionCaseName typ.name case.name
+            let caseName = unionCaseName typ case.name
 
             if case.fields.IsEmpty then
                 ident caseName
@@ -1017,7 +1033,7 @@ module JsonEncoderCodegen =
                 (call (typeApp "unbox" [ "string" ]) [ ident "value" ])
                 [ for case in typ.cases do
                       if case.fields.IsEmpty then
-                          patStr case.name, ident (unionCaseName typ.name case.name)
+                          patStr case.name, ident (unionCaseName typ case.name)
                   unknown ])
             (block
                 [ letValue "arr" (jsValue "toArray" [ ident "value" ])
@@ -1058,7 +1074,7 @@ module JsonEncoderCodegen =
                     (matchOn
                         (call (typeApp "unbox" [ "string" ]) [ ident "value" ])
                         [ for v in typ.values do
-                              patStr v.name, ident $"{typ.name}.{v.name}"
+                              patStr v.name, ident $"{typ.name}.{codeName v.name}"
                           patNamed "other", failWith "a known enum name" (boxed (ident "other")) ])
                     fromValue
 

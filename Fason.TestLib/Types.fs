@@ -133,6 +133,17 @@ module TestModule =
     /// A union case named like its type.
     type TestSameName = TestSameName of uint64 * string
 
+    /// A case named like its type, next to other cases.
+    type TestSameNameSibling =
+        | TestSameNameSibling of int
+        | Sibling
+        | Another of string
+
+    [<RequireQualifiedAccess>]
+    type TestQualified =
+        | First of int
+        | Sibling
+
     /// Units of measure nested in collections, options and generics.
     type TestUomNested =
         { ids: string<strMeasure> list
@@ -167,6 +178,36 @@ module TestModule =
         { time: TimeOnly; times: TimeOnly list }
 
     type TestDateTimeOffset = { at: DateTimeOffset }
+
+    /// Names that need double backticks in code.
+    type TestKeywordNames =
+        { ``base``: int
+          ``with space``: string
+          ``type``: bool option
+          ``anon``: {| ``member``: int |}
+          ``case``: TestKeywordCase
+          ``enum``: TestKeywordEnum }
+
+    and TestKeywordCase =
+        | ``Two Words`` of int
+        | ``Match`` of ``base``: int * ``other word``: string
+
+    and TestKeywordEnum =
+        | ``type`` = 0
+        | ``Two Words`` = 1
+
+    module ``Odd Module`` =
+        type ``Odd Type`` = { v: int }
+
+        type ``Odd Union`` = ``Odd Union`` of ``Odd Type``
+
+        [<Measure>]
+        type ``odd measure``
+
+    type TestKeywordTypes =
+        { odd: ``Odd Module``.``Odd Type``
+          oddUnion: ``Odd Module``.``Odd Union``
+          measured: int<``Odd Module``.``odd measure``> }
 
     /// Stands for its argument when collecting, like an async result does by default.
     [<FasonUnwrap>]
