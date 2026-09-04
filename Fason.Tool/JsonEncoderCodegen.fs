@@ -202,9 +202,6 @@ type Out =
     | Code of Statement
 
 module JsonEncoderCodegen =
-    /// When set, the JS codecs use the engine's date functions, which is faster under Hermes.
-    let mutable hermes = false
-
     // ---------------------------------------------------------------------------------
     // Type names and units of measure
     // ---------------------------------------------------------------------------------
@@ -883,7 +880,7 @@ module JsonEncoderCodegen =
     // ---------------------------------------------------------------------------------
 
     /// Converts `value` of the given type to a JavaScript value.
-    let private toJs (typ: SerializableType ref) (value: Expression) =
+    let private toJs (hermes: bool) (typ: SerializableType ref) (value: Expression) =
         let strippedType, strippedName, name = erased typ
 
         let value =
@@ -911,7 +908,7 @@ module JsonEncoderCodegen =
         | _ -> call (ident $"Codecs.{toJsName strippedName}") [ paren value ]
 
     /// Converts the JavaScript value `js` to the given type.
-    let private fromJs (typ: SerializableType ref) (js: Expression) =
+    let private fromJs (hermes: bool) (typ: SerializableType ref) (js: Expression) =
         let strippedType, strippedName, name = erased typ
 
         let converted =
@@ -952,7 +949,9 @@ module JsonEncoderCodegen =
     let private failWith (expected: string) (value: Expression) =
         curried "Fason.JsValue.fail" [ str expected; paren value ]
 
-    let private jsRecordToJs (fields: RecordField list) =
+    let private jsRecordToJs (hermes: bool) (fields: RecordField list) =
+        let toJs = toJs hermes
+
         block
             [ letValue "o" (platform "newObject" [])
               for field in fields do
@@ -970,7 +969,14 @@ module JsonEncoderCodegen =
                   | _ -> stmt (setField (toJs field.fieldType (ident $"value.{codeName field.name}")))
               stmt (ident "o") ]
 
-    let private jsRecordFromJs (fields: RecordField list) (typeName: string<typeName>) (isAnonymous: bool) =
+    let private jsRecordFromJs
+        (hermes: bool)
+        (fields: RecordField list)
+        (typeName: string<typeName>)
+        (isAnonymous: bool)
+        =
+        let fromJs = fromJs hermes
+
         let recordFields =
             [ for i, field in fields |> List.indexed -> RecordFieldExpr(codeName field.name, ident $"f{i}") ]
 
@@ -996,7 +1002,9 @@ module JsonEncoderCodegen =
                       RecordExpr recordFields
               ) ]
 
-    let private jsUnionToJs (typ: UnionType) =
+    let private jsUnionToJs (hermes: bool) (typ: UnionType) =
+        let toJs = toJs hermes
+
         matchOn
             (ident "value")
             [ for case in typ.cases do
@@ -1014,7 +1022,8 @@ module JsonEncoderCodegen =
                           )
                       ) ]
 
-    let private jsUnionFromJs (typ: UnionType) =
+    let private jsUnionFromJs (hermes: bool) (typ: UnionType) =
+        let fromJs = fromJs hermes
         let unknown = patNamed "other", failWith "a known case" (boxed (ident "other"))
 
         let caseFromArray (case: UnionCase) =
@@ -1084,7 +1093,9 @@ module JsonEncoderCodegen =
     let private forEachIndex (body: Expression) =
         forTo "i" (int 0) (infix (ident "arr.Length") "-" (int 1)) body
 
-    let private jsCodecs (typ: SerializableType ref) =
+    let private jsCodecs (hermes: bool) (typ: SerializableType ref) =
+        let toJs = toJs hermes
+        let fromJs = fromJs hermes
         let name = getTypeName typ
         let toArray = jsValue "toArray" [ ident "value" ]
 
@@ -1097,9 +1108,10 @@ module JsonEncoderCodegen =
         let toBody, fromBody =
             match typ.Value with
             | SerializableType.Basic _ -> toJs typ (ident "value"), fromJs typ (ident "value")
-            | SerializableType.Record r -> jsRecordToJs r.fields, jsRecordFromJs r.fields name false
-            | SerializableType.AnonymousRecord r -> jsRecordToJs r.fields, jsRecordFromJs r.fields name true
-            | SerializableType.Union u -> jsUnionToJs u, jsUnionFromJs u
+            | SerializableType.Record r -> jsRecordToJs hermes r.fields, jsRecordFromJs hermes r.fields name false
+            | SerializableType.AnonymousRecord r ->
+                jsRecordToJs hermes r.fields, jsRecordFromJs hermes r.fields name true
+            | SerializableType.Union u -> jsUnionToJs hermes u, jsUnionFromJs hermes u
             | SerializableType.Enum e -> jsEnum e
             | SerializableType.Tuple t ->
                 let names = t.values |> List.mapi (fun i _ -> $"v{i}")
@@ -1282,7 +1294,7 @@ module JsonEncoderCodegen =
           )
           paren (lambda [ "reader" ] (call (ident $"Codecs.{deserializerName name}") [ ident "reader" ])) ]
 
-    let generate (types: SerializableType ref array, ns: string) =
+    let generate (types: SerializableType ref array, ns: string, hermes: bool) =
         // Codecs are generated for the erased types only, since units of measure are
         // erased at runtime and cannot be told apart there.
         let typesWithCodec =
@@ -1319,7 +1331,7 @@ module JsonEncoderCodegen =
 
                 let jsMembers =
                     [ for typ in typesWithCodec do
-                          yield! jsCodecs typ
+                          yield! jsCodecs hermes typ
                       registerMember typeNames jsDelegates ]
 
                 TypeDefn("Codecs") {

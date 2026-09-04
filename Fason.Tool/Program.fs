@@ -3,6 +3,7 @@ open System.Collections.Concurrent
 open System.IO
 open System.Threading
 open FSharp.Compiler.CodeAnalysis
+open FSharp.Compiler.Diagnostics
 open FSharp.Compiler.Text
 open Fason
 open Ionide.ProjInfo
@@ -60,9 +61,9 @@ let writeIfChanged (path: string) (content: string) =
         File.WriteAllText(path, content)
         $"written to {path}"
 
-let generate (checker: FSharpChecker) (target: Target) =
+let generate (hermes: bool) (checker: FSharpChecker) (target: Target) =
     match lastAnnotatedFile target.options.SourceFiles with
-    | None -> printfn $"{target.projectPath}: no file mentions {attributeName}, nothing generated."
+    | None -> Log.info $"{target.projectPath}: no file mentions {attributeName}, nothing generated."
     | Some file ->
         let started = Diagnostics.Stopwatch.StartNew()
         let source = SourceText.ofString (File.ReadAllText file)
@@ -72,25 +73,29 @@ let generate (checker: FSharpChecker) (target: Target) =
             |> Async.RunSynchronously
 
         match answer with
-        | FSharpCheckFileAnswer.Aborted -> eprintfn $"{target.projectPath}: type check aborted."
+        | FSharpCheckFileAnswer.Aborted -> Log.error $"{target.projectPath}: type check aborted."
         | FSharpCheckFileAnswer.Succeeded result ->
             for diagnostic in result.Diagnostics do
-                eprintfn $"{diagnostic}"
+                if diagnostic.Severity = FSharpDiagnosticSeverity.Error then
+                    Log.error $"[fcs] {target.projectPath}: {diagnostic}"
 
             TypeCollector.reset ()
 
             for entity in result.PartialAssemblySignature.Entities do
                 TypeCollector.collectFrom entity
 
+            for typ, reason in TypeCollector.getSkipped () do
+                Log.warning $"{target.projectPath}: Skipping {typ}: {reason}"
+
             let serializableTypes = TypeCollector.getSerializableTypes ()
-            let code = JsonEncoderCodegen.generate (serializableTypes, target.ns)
+            let code = JsonEncoderCodegen.generate (serializableTypes, target.ns, hermes)
             let status = writeIfChanged target.outputPath code
 
-            printfn
+            Log.info
                 $"{target.projectPath}: {serializableTypes.Length} types, {started.ElapsedMilliseconds} ms, {status}."
 
 let main (argv: string array) =
-    JsonEncoderCodegen.hermes <- argv |> Array.contains "--hermes"
+    let hermes = argv |> Array.contains "--hermes"
 
     let option (name: string) =
         match argv |> Array.tryFindIndex ((=) name) with
@@ -165,7 +170,7 @@ let main (argv: string array) =
         let loader = WorkspaceLoader.Create(toolsPath, globalProperties)
 
         let load () =
-            printfn $"Loading {projectPaths.Length} project(s) with SDK {sdkToUse.Version}"
+            Log.info $"Loading {projectPaths.Length} project(s) with SDK {sdkToUse.Version}"
 
             let loaded =
                 loader.LoadProjects(projectPaths, [ "FasonOutput"; "FasonNamespace" ], BinaryLogGeneration.Off)
@@ -185,9 +190,9 @@ let main (argv: string array) =
         let generateAll targets =
             for target in targets do
                 try
-                    generate checker target
+                    generate hermes checker target
                 with ex ->
-                    eprintfn $"{target.projectPath}: {ex.Message}"
+                    Log.error $"{target.projectPath}: {ex.Message}"
 
         generateAll targets
 
@@ -211,7 +216,7 @@ let main (argv: string array) =
                       watcher.EnableRaisingEvents <- true
                       watcher ]
 
-            printfn "Watching for changes. Press Ctrl+C to stop."
+            Log.info "Watching for changes. Press Ctrl+C to stop."
 
             try
                 let mutable watched = watchedFiles loaded

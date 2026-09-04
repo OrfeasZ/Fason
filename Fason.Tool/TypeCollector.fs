@@ -119,6 +119,9 @@ let private types = Dictionary<FSharpType * int list, SerializableType ref>()
 /// Keys of `types` in registration order, so a failed mapping can discard everything it registered.
 let private registered = List<FSharpType * int list>()
 
+/// Types dropped for being unsupported, with the reason.
+let private skipped = List<FSharpType * string>()
+
 let private refIds = Dictionary<SerializableType ref, int>(HashIdentity.Reference)
 
 let private idOf (r: SerializableType ref) =
@@ -378,7 +381,7 @@ let private typeFromFsharpType (genericTypeArgs: Map<string, SerializableType re
                         | _ -> failwith $"Unsupported type {typ}"
 
             with ex ->
-                eprintfn $"Skipping {typ}: {ex.Message}"
+                skipped.Add((typ, ex.Message))
 
                 for i in mark .. registered.Count - 1 do
                     types.Remove registered[i] |> ignore
@@ -417,7 +420,10 @@ let rec collectFrom (entity: FSharpEntity) =
 
 let getSerializableTypes () = types |> Seq.map _.Value |> Seq.toArray
 
+let getSkipped () = skipped |> Seq.toList
+
 let reset () =
     types.Clear()
     registered.Clear()
+    skipped.Clear()
     refIds.Clear()

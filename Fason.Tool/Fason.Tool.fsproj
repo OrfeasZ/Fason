@@ -17,6 +17,7 @@
     </ItemGroup>
 
     <ItemGroup>
+        <Compile Include="Log.fs"/>
         <Compile Include="TypeCollector.fs"/>
         <Compile Include="JsonEncoderCodegen.fs"/>
         <Compile Include="Program.fs"/>
