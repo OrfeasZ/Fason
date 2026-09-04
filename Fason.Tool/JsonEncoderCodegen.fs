@@ -884,7 +884,7 @@ module JsonEncoderCodegen =
             | BasicType.DateTime -> jsValue "ofDateTime" [ paren value ]
             | BasicType.TimeSpan -> jsValue "ofTimeSpan" [ paren value ]
             | _ -> boxed value
-        | _ -> call (ident $"JsCodecs.{toJsName strippedName}") [ paren value ]
+        | _ -> call (ident $"Codecs.{toJsName strippedName}") [ paren value ]
 
     /// Converts the JavaScript value `js` to the given type.
     let private fromJs (typ: SerializableType ref) (js: Expression) =
@@ -908,7 +908,7 @@ module JsonEncoderCodegen =
                 | BasicType.DateTime -> jsValue "toDateTime" [ paren js ]
                 | BasicType.TimeSpan -> jsValue "toTimeSpan" [ paren js ]
                 | other -> curried (string other.typeName) [ paren (jsValue "toInt32" [ paren js ]) ]
-            | _ -> call (ident $"JsCodecs.{fromJsName strippedName}") [ paren js ]
+            | _ -> call (ident $"Codecs.{fromJsName strippedName}") [ paren js ]
 
         if strippedName = name then
             converted
@@ -1224,155 +1224,35 @@ module JsonEncoderCodegen =
           staticMember (fromJsName name) [ "value", "obj" ] (string name) fromBody ]
 
     // ---------------------------------------------------------------------------------
-    // Public entry points
+    // Registration
     // ---------------------------------------------------------------------------------
 
-    /// The `Json` module lives in the generated file so the codec table is initialized on
-    /// first use without a registration call, and its names never change between generations.
-    let private jsonModule (typeNames: string<typeName> list) =
-        // On .NET the table is keyed by the Type itself. Under Fable a Type hashes
-        // structurally on every lookup, so the key is a string there.
-        let codecTable (key: Expression -> Expression) (delegates: string<typeName> -> Expression list) =
-            let entries =
-                [ for name in typeNames ->
-                      tuple
-                          [ key (typeApp "typeof" [ string name ])
-                            upcastTo (call (typeApp "Fason.Codec" [ string name ]) (delegates name)) "Fason.ICodec" ] ]
-
-            Value("codecs", curried "dict" [ list entries ]) |> _.toPrivate()
-
-        let typeKey (typ: Expression) =
-            call (ident "Fason.TypeKey.ofType") [ typ ]
-
-        let codecFor (key: Expression) =
-            letFunction
-                "codecFor"
-                [ "typ", "System.Type" ]
-                "Fason.ICodec"
-                (matchOn
-                    (call (ident "codecs.TryGetValue") [ key ])
-                    [ patTuple [ ConstantPat(Bool true); patNamed "codec" ], ident "codec"
-                      patWild,
+    /// `Codecs.Register()`, which registers every codec with `Fason.Json`.
+    let private registerMember (typeNames: string<typeName> list) (delegates: string<typeName> -> Expression list) =
+        let entries =
+            [ for name in typeNames ->
+                  stmt (
                       curried
-                          "failwith"
-                          [ paren (infix (str "no JSON codec was generated for type ") "+" (ident "typ.FullName")) ] ])
-            |> _.xmlDocs([ "The codec for a runtime type, for callers that only have a System.Type." ])
+                          "Fason.Json.register"
+                          [ typeApp "typeof" [ string name ]
+                            paren (
+                                upcastTo (call (typeApp "Fason.Codec" [ string name ]) (delegates name)) "Fason.ICodec"
+                            ) ]
+                  ) ]
 
-        let jsDelegates name =
-            [ paren (lambda [ "value" ] (call (ident $"JsCodecs.{toJsName name}") [ ident "value" ]))
-              paren (lambda [ "js" ] (call (ident $"JsCodecs.{fromJsName name}") [ ident "js" ])) ]
+        staticMember "Register" [] "unit" (if entries.IsEmpty then unit else block entries)
 
-        let streamDelegates name =
-            [ paren (
-                  lambda
-                      [ "value"; "writer" ]
-                      (call (ident $"Codecs.{serializerName name}") [ ident "value"; ident "writer" ])
-              )
-              paren (lambda [ "reader" ] (call (ident $"Codecs.{deserializerName name}") [ ident "reader" ])) ]
+    let private jsDelegates name =
+        [ paren (lambda [ "value" ] (call (ident $"Codecs.{toJsName name}") [ ident "value" ]))
+          paren (lambda [ "js" ] (call (ident $"Codecs.{fromJsName name}") [ ident "js" ])) ]
 
-        let typedFunction name ps returnType body =
-            letFunction name ps returnType body
-            |> _.toInlined()
-            |> _.typeParams(PostfixList [ "'T" ])
-
-        let codecOfT = call (typeApp "codecOf" [ "'T" ]) []
-        let codecForType = call (ident "codecFor") [ ident "typ" ]
-
-        let withWriter (codec: Expression) (serializeMember: string) =
-            block
-                [ letValue "writer" (call (ident "Fason.JsonWriter") [])
-                  letValue "codec" codec
-                  stmt (call (ident $"codec.{serializeMember}") [ ident "value"; ident "writer" ])
-                  stmt (call (ident "writer.ToString") []) ]
-
-        let withCodec (codec: Expression) (body: Expression) =
-            block [ letValue "codec" codec; stmt body ]
-
-        Module("Json") {
-            codecTable typeKey jsDelegates |> _.triviaBefore(Directive "#if FABLE_COMPILER")
-            codecFor (paren (typeKey (ident "typ")))
-            codecTable id streamDelegates |> _.triviaBefore(Directive "#else")
-            codecFor (ident "typ") |> _.triviaAfter(Directive "#endif")
-
-            typedFunction
-                "codecOf"
-                []
-                "Fason.ICodec<'T>"
-                (downcastTo (call (ident "codecFor") [ typeApp "typeof" [ "'T" ] ]) "Fason.ICodec<'T>")
-            |> _.triviaBefore(Directive "#if FABLE_COMPILER")
-
-            TypeDefn("CodecCache", Constructor(UnitPat())) {
-                MemberVal(
-                    "Codec",
-                    downcastTo (call (ident "codecFor") [ typeApp "typeof" [ "'T" ] ]) "Fason.ICodec<'T>",
-                    true,
-                    false
-                )
-                    .toStatic ()
-            }
-            |> _.typeParams(PostfixList [ "'T" ])
-            |> _.triviaBefore(Directive "#else")
-
-            typedFunction "codecOf" [] "Fason.ICodec<'T>" (ident "CodecCache<'T>.Codec")
-            |> _.triviaAfter(Directive "#endif")
-
-            // The same four entry points on both platforms. Under Fable they go through
-            // JavaScript values and the native JSON functions. On .NET they go through the streaming code.
-            typedFunction
-                "serialize"
-                [ "value", "'T" ]
-                "string"
-                (withCodec codecOfT (platform "jsonStringify" [ paren (call (ident "codec.ToJs") [ ident "value" ]) ]))
-            |> _.triviaBefore(Directive "#if FABLE_COMPILER")
-
-            typedFunction
-                "deserialize"
-                [ "json", "string" ]
-                "'T"
-                (withCodec codecOfT (call (ident "codec.FromJs") [ paren (platform "jsonParse" [ ident "json" ]) ]))
-
-            letFunction
-                "serializeObj"
-                [ "value", "obj"; "typ", "System.Type" ]
-                "string"
-                (withCodec
-                    codecForType
-                    (platform "jsonStringify" [ paren (call (ident "codec.ToJsObj") [ ident "value" ]) ]))
-
-            letFunction
-                "deserializeObj"
-                [ "json", "string"; "typ", "System.Type" ]
-                "obj"
-                (withCodec
-                    codecForType
-                    (call (ident "codec.FromJsObj") [ paren (platform "jsonParse" [ ident "json" ]) ]))
-
-            typedFunction "serialize" [ "value", "'T" ] "string" (withWriter codecOfT "Serialize")
-            |> _.triviaBefore(Directive "#else")
-
-            typedFunction
-                "deserialize"
-                [ "json", "string" ]
-                "'T"
-                (withCodec
-                    codecOfT
-                    (call (ident "codec.Deserialize") [ paren (call (ident "Fason.JsonReader") [ ident "json" ]) ]))
-
-            letFunction
-                "serializeObj"
-                [ "value", "obj"; "typ", "System.Type" ]
-                "string"
-                (withWriter codecForType "SerializeObj")
-
-            letFunction
-                "deserializeObj"
-                [ "json", "string"; "typ", "System.Type" ]
-                "obj"
-                (withCodec
-                    codecForType
-                    (call (ident "codec.DeserializeObj") [ paren (call (ident "Fason.JsonReader") [ ident "json" ]) ]))
-            |> _.triviaAfter(Directive "#endif")
-        }
+    let private streamDelegates name =
+        [ paren (
+              lambda
+                  [ "value"; "writer" ]
+                  (call (ident $"Codecs.{serializerName name}") [ ident "value"; ident "writer" ])
+          )
+          paren (lambda [ "reader" ] (call (ident $"Codecs.{deserializerName name}") [ ident "reader" ])) ]
 
     let generate (types: SerializableType ref array, ns: string) =
         // Codecs are generated for the erased types only, since units of measure are
@@ -1401,20 +1281,31 @@ module JsonEncoderCodegen =
                     Open("FSharp.UMX")
 
                 // The streaming codecs only serve .NET. Fable goes through the JS codecs.
+                let typeNames = typesWithCodec |> List.map getTypeName
+
+                let streamMembers =
+                    [ for typ in typesWithCodec do
+                          typeSerializer typ
+                          typeDeserializer typ
+                      registerMember typeNames streamDelegates ]
+
+                let jsMembers =
+                    [ for typ in typesWithCodec do
+                          yield! jsCodecs typ
+                      registerMember typeNames jsDelegates ]
+
                 TypeDefn("Codecs") {
-                    for typ in typesWithCodec do
-                        typeSerializer typ
-                        typeDeserializer typ
-                }
-                |> directives ("#if !FABLE_COMPILER", "#endif")
+                    for m in
+                        streamMembers
+                        |> List.updateAt 0 (streamMembers.Head |> _.triviaBefore(Directive "#if !FABLE_COMPILER")) do
+                        m
 
-                TypeDefn("JsCodecs") {
-                    for typ in typesWithCodec do
-                        yield! jsCodecs typ
+                    for m in
+                        jsMembers
+                        |> List.updateAt 0 (jsMembers.Head |> _.triviaBefore(Directive "#else")) do
+                        m
                 }
-                |> directives ("#if FABLE_COMPILER", "#endif")
-
-                jsonModule (typesWithCodec |> List.map getTypeName)
+                |> _.triviaAfter(Directive "#endif")
             }
         }
         |> Gen.mkOak

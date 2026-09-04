@@ -1,6 +1,7 @@
 module Fason.TestLib.Program
 
 open System
+open Fason
 open Fason.TestLib.TestModule
 open Fason.TestLib.Serialization
 open FSharp.UMX
@@ -27,8 +28,8 @@ let inline roundTrip<'T when 'T: equality> (name: string) (original: 'T) =
         let parsed = Json.deserialize<'T> json
         check $"{name} (typed)" (parsed = original) $"json: {json}\n      parsed: %A{parsed}"
 
-        let jsonObj = Json.serializeObj (box original, typeof<'T>)
-        let parsedObj = Json.deserializeObj (jsonObj, typeof<'T>) :?> 'T
+        let jsonObj = Json.serializeObj typeof<'T> (box original)
+        let parsedObj = Json.deserializeObj typeof<'T> jsonObj :?> 'T
         check $"{name} (obj)" (jsonObj = json && parsedObj = original) $"json: {jsonObj}\n      parsed: %A{parsedObj}"
     with ex ->
         check name false $"%A{ex}"
@@ -140,6 +141,8 @@ let testStrings: TestStrings =
 
 [<EntryPoint>]
 let realMain argv =
+    Codecs.Register()
+
     roundTrip "advanced" testAdvanced
 
     let basics: TestAllBasicTypes =
@@ -324,7 +327,7 @@ let realMain argv =
 
     expectFailure "missing required field fails" (fun () -> Json.deserialize<TestRecordSimple> """{"a": 1}""" |> ignore)
     expectFailure "unknown union tag fails" (fun () -> Json.deserialize<TestUnion> "\"Q\"" |> ignore)
-    expectFailure "unregistered type fails" (fun () -> Json.serializeObj (box 1uy, typeof<decimal>) |> ignore)
+    expectFailure "unregistered type fails" (fun () -> Json.serializeObj typeof<decimal> (box 1uy) |> ignore)
 
 #if !FABLE_COMPILER
     // The streaming reader checks integer ranges. The JavaScript path takes what JSON.parse gives it.

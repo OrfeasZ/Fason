@@ -26,9 +26,20 @@ To generate the encoders / decoders, run `dotnet fason MyProject.fsproj`, where 
 F# project. This will create a `Fason.Generated.fs` file next to your project file. You can pass several projects at
 once by separating them with spaces.
 
-Include the generated file in your project, and then use the generated `Json.serialize`, `Json.deserialize<'T>`,
-`Json.serializeObj`, and `Json.deserializeObj` to convert your values between JSON and back. The `Obj`-suffixed methods
-take an `obj` and its `Type` instead of a concrete object, for cases where it might not be known at runtime.
+Include the generated file in your project and call the generated `Codecs.Register()` once at startup, before any
+JSON conversion. Then use `Json.serialize`, `Json.deserialize<'T>`, `Json.serializeObj`, and `Json.deserializeObj`
+from the `Fason` namespace to convert your values between JSON and back. The `Obj`-suffixed functions take a `Type` and
+an `obj` instead of a concrete object, for cases where it might not be known at runtime.
+
+```fsharp
+open Fason
+
+MyProject.Serialization.Codecs.Register()
+
+let json = Json.serialize { hello = "hi"; world = 1 }
+let value = Json.deserialize<MyRecord> json
+let jsonObj = Json.serializeObj typeof<MyRecord> (box value)
+```
 
 ## Options
 

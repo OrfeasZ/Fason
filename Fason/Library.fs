@@ -921,3 +921,79 @@ type BitSet(values: uint32 array) =
 
     member this.AnyFalse() =
         values |> Array.exists (fun v -> v <> 0xffffffffu)
+
+module Json =
+#if FABLE_COMPILER
+    let private codecs = Collections.Generic.Dictionary<string, ICodec>()
+
+    /// Used to register codecs. Do not call manually. Call the `Register()` method on the generated code instead.
+    let register (typ: Type) (codec: ICodec) : unit = codecs[TypeKey.ofType typ] <- codec
+
+    /// The codec for a runtime type, for callers that only have a System.Type.
+    let codecFor (typ: Type) : ICodec =
+        match codecs.TryGetValue(TypeKey.ofType typ) with
+        | true, codec -> codec
+        | _ -> failwith ("no JSON codec is registered for type " + typ.FullName)
+
+    let inline codecOf<'T> () : ICodec<'T> = codecFor typeof<'T> :?> ICodec<'T>
+
+    /// Serialize a value of a concrete type `'T` to a JSON string.
+    let inline serialize<'T> (value: 'T) : string =
+        let codec = codecOf<'T> ()
+        Platform.jsonStringify (codec.ToJs value)
+
+    /// Deserialize a JSON string into a value of type `'T`.
+    let inline deserialize<'T> (json: string) : 'T =
+        let codec = codecOf<'T> ()
+        codec.FromJs(Platform.jsonParse json)
+
+    /// Serialize a value of the given `Type` to a JSON string.
+    let serializeObj (typ: Type) (value: obj) : string =
+        let codec = codecFor typ
+        Platform.jsonStringify (codec.ToJsObj value)
+
+    /// Deserialize a JSON string into a value of type `Type`.
+    let deserializeObj (typ: Type) (json: string) : obj =
+        let codec = codecFor typ
+        codec.FromJsObj(Platform.jsonParse json)
+#else
+    let private codecs = Collections.Generic.Dictionary<Type, ICodec>()
+
+    /// Used to register codecs. Do not call manually. Call the `Register()` method on the generated code instead.
+    let register (typ: Type) (codec: ICodec) : unit = codecs[typ] <- codec
+
+    /// The codec for a runtime type, for callers that only have a System.Type.
+    let codecFor (typ: Type) : ICodec =
+        match codecs.TryGetValue typ with
+        | true, codec -> codec
+        | _ -> failwith ("no JSON codec is registered for type " + typ.FullName)
+
+    type CodecCache<'T>() =
+        static member val Codec = codecFor typeof<'T> :?> ICodec<'T> with get
+
+    let inline codecOf<'T> () : ICodec<'T> = CodecCache<'T>.Codec
+
+    /// Serialize a value of a concrete type `'T` to a JSON string.
+    let inline serialize<'T> (value: 'T) : string =
+        let writer = JsonWriter()
+        let codec = codecOf<'T> ()
+        codec.Serialize(value, writer)
+        writer.ToString()
+
+    /// Deserialize a JSON string into a value of type `'T`.
+    let inline deserialize<'T> (json: string) : 'T =
+        let codec = codecOf<'T> ()
+        codec.Deserialize(JsonReader json)
+
+    /// Serialize a value of the given `Type` to a JSON string.
+    let serializeObj (typ: Type) (value: obj) : string =
+        let writer = JsonWriter()
+        let codec = codecFor typ
+        codec.SerializeObj(value, writer)
+        writer.ToString()
+
+    /// Deserialize a JSON string into a value of type `Type`.
+    let deserializeObj (typ: Type) (json: string) : obj =
+        let codec = codecFor typ
+        codec.DeserializeObj(JsonReader json)
+#endif
