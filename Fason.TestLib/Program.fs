@@ -276,6 +276,16 @@ let realMain argv =
     for value in [ TestQualified.First 1; TestQualified.Sibling ] do
         roundTrip $"union with qualified access: %A{value}" value
 
+    let measures =
+        { session = %"s1"
+          sessions = [ %"s2" ]
+          speed = 1.5<m / s>
+          area = 2.0<m^2>
+          rate = 3<1 / s>
+          scalar = 4.0<1> }
+
+    roundTrip "measure expressions" measures
+    thothCompatible "thoth: measure expressions" measures
     roundTrip "units of measure nested" testUomNested
     roundTrip "tuples nested" testTuplesNested
     roundTrip "unit" { nothing = (); list = [ (); () ] }

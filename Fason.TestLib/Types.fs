@@ -144,6 +144,20 @@ module TestModule =
         | First of int
         | Sibling
 
+    [<Measure>]
+    type sessionId
+
+    /// An abbreviation of a measured string, and compound measures.
+    and SessionId = string<sessionId>
+
+    type TestMeasureExpressions =
+        { session: SessionId
+          sessions: SessionId list
+          speed: float<m / s>
+          area: float<m^2>
+          rate: int<1 / s>
+          scalar: float<1> }
+
     /// Units of measure nested in collections, options and generics.
     type TestUomNested =
         { ids: string<strMeasure> list

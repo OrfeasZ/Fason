@@ -167,6 +167,25 @@ let rec private entityName (entity: FSharpEntity) =
         $"{ns}.{own}"
     | None, None -> own
 
+/// A unit of measure expression. The compiler sometimes gives us products, inverses and
+/// the dimensionless unit as generic instantiations of internal entities.
+let rec private measureName (typ: FSharpType) : string =
+    if not typ.HasTypeDefinition then
+        // Rational powers have no entity behind them.
+        typ.Format FSharpDisplayContext.Empty
+    else
+        let arg i = measureName typ.GenericArguments[i]
+
+        match typ.TypeDefinition.LogicalName with
+        | "MeasureOne" -> "1"
+        | "MeasureInverse`1" -> $"({arg 0} ^ -1)"
+        | "MeasureProduct`2" ->
+            match arg 0, arg 1 with
+            | "1", m
+            | m, "1" -> m
+            | a, b -> $"({a} * {b})"
+        | _ -> entityName typ.TypeDefinition
+
 let private typeToTypeName (typ: FSharpType) : string<typeName> =
     if typ.HasTypeDefinition then
         %(entityName typ.TypeDefinition)
@@ -327,7 +346,7 @@ let private typeFromFsharpType (genericTypeArgs: Map<string, SerializableType re
                     | None when typ.GenericArguments.Count > 0 && typ.GenericArguments[0].IsMeasureType ->
                         SerializableType.UnitOfMeasure
                             { baseType = typ.ErasedType |> handleGenericType genericTypeArgs
-                              unitOfMeasure = typ.GenericArguments[0] |> typeToTypeName }
+                              unitOfMeasure = %(typ.GenericArguments[0] |> measureName) }
                     | None when typ.IsAnonRecordType ->
                         // TODO: Handle attributes
                         SerializableType.AnonymousRecord
