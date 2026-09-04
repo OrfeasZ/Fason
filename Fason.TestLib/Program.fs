@@ -41,7 +41,8 @@ let inline expectJson (name: string) (value: 'T) (expected: string) =
     with ex ->
         check name false $"%A{ex}"
 
-let thothExtra = Extra.empty |> Extra.withInt64 |> Extra.withUInt64
+let thothExtra =
+    Extra.empty |> Extra.withInt64 |> Extra.withUInt64 |> Extra.withDecimal
 
 /// The generated JSON must be what Thoth's auto coders produce, and both must read each other's output.
 let inline thothCompatible<'T when 'T: equality> (name: string) (value: 'T) =
@@ -163,9 +164,41 @@ let realMain argv =
           o = "text"
           p = Guid.NewGuid()
           q = DateTime(2026, 9, 3, 12, 34, 56, DateTimeKind.Utc)
-          r = TimeSpan.FromMinutes 90.0 }
+          r = TimeSpan.FromMinutes 90.0
+          s = 1234567890.123456789M }
 
     roundTrip "all basic types" basics
+    expectJson "decimal json" ({ d = 1.5M }: TestDecimal) """{"d":"1.5"}"""
+    check "decimal reads a bare number" (Json.deserialize<TestDecimal> """{"d":2.25}""" = { d = 2.25M }) ""
+
+    let dateOnly =
+        { day = DateOnly(2026, 9, 5)
+          days = [ DateOnly(1999, 12, 31); DateOnly(2000, 1, 1) ] }
+
+    roundTrip "date only" dateOnly
+    expectJson "date only json" dateOnly """{"day":"2026-09-05","days":["1999-12-31","2000-01-01"]}"""
+
+    let timeOnly =
+        { time = TimeOnly(12, 34, 56, 789)
+          times = [ TimeOnly(0, 0); TimeOnly(23, 59, 59) ] }
+
+    roundTrip "time only" timeOnly
+
+    expectJson
+        "time only json"
+        timeOnly
+        """{"time":"12:34:56.7890000","times":["00:00:00.0000000","23:59:59.0000000"]}"""
+
+    let dateTimeOffset =
+        { at = DateTimeOffset(2026, 9, 5, 12, 34, 56, 789, TimeSpan.FromHours 2.0) }
+
+    roundTrip "date time offset" dateTimeOffset
+#if FABLE_COMPILER
+    expectJson "date time offset json" dateTimeOffset """{"at":"2026-09-05T12:34:56.789+02:00"}"""
+#else
+    expectJson "date time offset json" dateTimeOffset """{"at":"2026-09-05T12:34:56.7890000+02:00"}"""
+#endif
+    thothCompatible "thoth: date time offset" dateTimeOffset
 
     roundTrip "anonymous record" ({| a = 1; b = "b" |}: TestAnonymousRecord)
 
@@ -327,7 +360,7 @@ let realMain argv =
 
     expectFailure "missing required field fails" (fun () -> Json.deserialize<TestRecordSimple> """{"a": 1}""" |> ignore)
     expectFailure "unknown union tag fails" (fun () -> Json.deserialize<TestUnion> "\"Q\"" |> ignore)
-    expectFailure "unregistered type fails" (fun () -> Json.serializeObj typeof<decimal> (box 1uy) |> ignore)
+    expectFailure "unregistered type fails" (fun () -> Json.serializeObj typeof<TestUnsupported> (box 1uy) |> ignore)
 
 #if !FABLE_COMPILER
     // The streaming reader checks integer ranges. The JavaScript path takes what JSON.parse gives it.

@@ -48,7 +48,8 @@ module TestModule =
           o: string
           p: Guid
           q: DateTime
-          r: TimeSpan }
+          r: TimeSpan
+          s: decimal }
 
     type TestAnonymousRecord = {| a: int; b: string |}
 
@@ -157,6 +158,15 @@ module TestModule =
     type TestUnit = { nothing: unit; list: unit list }
 
     type TestDate = { at: DateTime }
+
+    type TestDateOnly = { day: DateOnly; days: DateOnly list }
+
+    type TestDecimal = { d: decimal }
+
+    type TestTimeOnly =
+        { time: TimeOnly; times: TimeOnly list }
+
+    type TestDateTimeOffset = { at: DateTimeOffset }
 
     /// Stands for its argument when collecting, like an async result does by default.
     [<FasonUnwrap>]

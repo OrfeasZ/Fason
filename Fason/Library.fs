@@ -385,6 +385,29 @@ type JsonWriter() =
         this.WriteInternal(string value)
         this.WriteInternal("\"")
 
+    // Decimals are quoted, as Thoth does, so JavaScript never loses precision.
+    member this.Write(value: decimal) =
+        this.WriteInternal("\"")
+        this.WriteInternal(value.ToString(CultureInfo.InvariantCulture))
+        this.WriteInternal("\"")
+
+    member this.Write(value: DateTimeOffset) =
+        this.WriteInternal("\"")
+        this.WriteInternal(value.ToString("O", CultureInfo.InvariantCulture))
+        this.WriteInternal("\"")
+
+#if NET6_0_OR_GREATER
+    member this.Write(value: DateOnly) =
+        this.WriteInternal("\"")
+        this.WriteInternal(value.ToString("O", CultureInfo.InvariantCulture))
+        this.WriteInternal("\"")
+
+    member this.Write(value: TimeOnly) =
+        this.WriteInternal("\"")
+        this.WriteInternal(value.ToString("O", CultureInfo.InvariantCulture))
+        this.WriteInternal("\"")
+#endif
+
     override this.ToString() = builder.ToString()
 
 type JsonReader(json: string) =
@@ -577,7 +600,8 @@ type JsonReader(json: string) =
             | other -> this.Fail $"expected a number, got '{other}'"
         | _ -> this.ReadFiniteNumber()
 
-    member private this.ReadFiniteNumber() =
+    /// The text of the number at the current position.
+    member private this.ScanNumber() =
         let start = index
 
         if this.PeekCode() = 45 then // '-'
@@ -603,11 +627,25 @@ type JsonReader(json: string) =
         if index = start then
             this.Fail "expected a number"
 
-        let text = json.Substring(start, index - start)
+        json.Substring(start, index - start)
+
+    member private this.ReadFiniteNumber() =
+        let text = this.ScanNumber()
 
         match Double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture) with
         | true, value -> value
         | _ -> this.Fail $"expected a number, got '{text}'"
+
+    member this.ReadDecimal() =
+        let quoted = this.SkipOpeningQuote()
+        let text = this.ScanNumber()
+
+        if quoted then
+            this.Expect '"'
+
+        match Decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture) with
+        | true, value -> value
+        | _ -> this.Fail $"expected a decimal, got '{text}'"
 
     member this.ReadSingle() = single (this.ReadRealNumber())
     member this.ReadDouble() = this.ReadRealNumber()
@@ -696,6 +734,17 @@ type JsonReader(json: string) =
 
     member this.ReadTimeSpan() =
         TimeSpan.Parse(this.ReadString(), CultureInfo.InvariantCulture)
+
+    member this.ReadDateTimeOffset() =
+        DateTimeOffset.Parse(this.ReadString(), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)
+
+#if NET6_0_OR_GREATER
+    member this.ReadDateOnly() =
+        DateOnly.ParseExact(this.ReadString(), "yyyy-MM-dd", CultureInfo.InvariantCulture)
+
+    member this.ReadTimeOnly() =
+        TimeOnly.Parse(this.ReadString(), CultureInfo.InvariantCulture)
+#endif
 
     member this.ReadChar() =
         let str = this.ReadString()
@@ -853,6 +902,17 @@ module JsValue =
     let inline toDateTimeNative (v: obj) : DateTime = DateText.parseNative (toString v)
     let inline toGuid (v: obj) : Guid = Guid.Parse(toString v)
     let inline toTimeSpan (v: obj) : TimeSpan = TimeSpan.Parse(toString v)
+    let inline toDateOnly (v: obj) : DateOnly = DateOnly.Parse(toString v)
+    let inline toTimeOnly (v: obj) : TimeOnly = TimeOnly.Parse(toString v)
+    let inline toDateTimeOffset (v: obj) : DateTimeOffset = DateTimeOffset.Parse(toString v)
+
+    let toDecimal (v: obj) : decimal =
+        let t = Platform.typeOf v
+
+        if t = "string" || t = "number" then
+            Decimal.Parse(Platform.jsString v)
+        else
+            fail "a decimal" v
 
     let inline toArray (v: obj) : obj[] =
         if Platform.isArray v then unbox v else fail "an array" v
@@ -876,6 +936,17 @@ module JsValue =
     let inline ofUInt64 (v: uint64) : obj = box (Platform.jsString v)
     let inline ofGuid (g: Guid) : obj = box (string g)
     let inline ofTimeSpan (t: TimeSpan) : obj = box (string t)
+
+    let inline ofDateOnly (d: DateOnly) : obj =
+        box (d.ToString("O", System.Globalization.CultureInfo.InvariantCulture))
+
+    let inline ofTimeOnly (t: TimeOnly) : obj =
+        box (t.ToString("O", System.Globalization.CultureInfo.InvariantCulture))
+
+    let inline ofDateTimeOffset (d: DateTimeOffset) : obj =
+        box (d.ToString("O", System.Globalization.CultureInfo.InvariantCulture))
+
+    let inline ofDecimal (d: decimal) : obj = box (string d)
     let inline ofChar (c: char) : obj = box (string c)
 #endif
 

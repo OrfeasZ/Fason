@@ -557,10 +557,14 @@ module JsonEncoderCodegen =
             | BasicType.UInt64 -> "ReadUInt64"
             | BasicType.Single -> "ReadSingle"
             | BasicType.Double -> "ReadDouble"
+            | BasicType.Decimal -> "ReadDecimal"
             | BasicType.String -> "ReadString"
             | BasicType.Guid -> "ReadGuid"
             | BasicType.DateTime -> "ReadDateTime"
             | BasicType.TimeSpan -> "ReadTimeSpan"
+            | BasicType.DateOnly -> "ReadDateOnly"
+            | BasicType.TimeOnly -> "ReadTimeOnly"
+            | BasicType.DateTimeOffset -> "ReadDateTimeOffset"
             | BasicType.Unit -> "ReadNull"
 
         reader name []
@@ -883,6 +887,10 @@ module JsonEncoderCodegen =
             | BasicType.DateTime when hermes -> jsValue "ofDateTimeNative" [ paren value ]
             | BasicType.DateTime -> jsValue "ofDateTime" [ paren value ]
             | BasicType.TimeSpan -> jsValue "ofTimeSpan" [ paren value ]
+            | BasicType.DateOnly -> jsValue "ofDateOnly" [ paren value ]
+            | BasicType.TimeOnly -> jsValue "ofTimeOnly" [ paren value ]
+            | BasicType.DateTimeOffset -> jsValue "ofDateTimeOffset" [ paren value ]
+            | BasicType.Decimal -> jsValue "ofDecimal" [ paren value ]
             | _ -> boxed value
         | _ -> call (ident $"Codecs.{toJsName strippedName}") [ paren value ]
 
@@ -907,6 +915,10 @@ module JsonEncoderCodegen =
                 | BasicType.DateTime when hermes -> jsValue "toDateTimeNative" [ paren js ]
                 | BasicType.DateTime -> jsValue "toDateTime" [ paren js ]
                 | BasicType.TimeSpan -> jsValue "toTimeSpan" [ paren js ]
+                | BasicType.DateOnly -> jsValue "toDateOnly" [ paren js ]
+                | BasicType.TimeOnly -> jsValue "toTimeOnly" [ paren js ]
+                | BasicType.DateTimeOffset -> jsValue "toDateTimeOffset" [ paren js ]
+                | BasicType.Decimal -> jsValue "toDecimal" [ paren js ]
                 | other -> curried (string other.typeName) [ paren (jsValue "toInt32" [ paren js ]) ]
             | _ -> call (ident $"Codecs.{fromJsName strippedName}") [ paren js ]
 
@@ -1269,7 +1281,7 @@ module JsonEncoderCodegen =
             types
             |> Seq.exists (fun t ->
                 match t.Value with
-                | SerializableType.UnitOfMeasure { baseType = { contents = SerializableType.Basic(BasicType.String | BasicType.Guid | BasicType.Bool | BasicType.Char | BasicType.DateTime | BasicType.TimeSpan | BasicType.Unit) } } ->
+                | SerializableType.UnitOfMeasure { baseType = { contents = SerializableType.Basic(BasicType.String | BasicType.Guid | BasicType.Bool | BasicType.Char | BasicType.DateTime | BasicType.TimeSpan | BasicType.DateOnly | BasicType.TimeOnly | BasicType.DateTimeOffset | BasicType.Unit) } } ->
                     true
                 | _ -> false)
 

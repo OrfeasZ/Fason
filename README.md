@@ -2,7 +2,7 @@
 
 An F# code generator that generates optimized (and Thoth-compatible) JSON encoders and decoders for F# types, without
 using reflection. Only supports F# types (e.g. records, tuples, DUs, collections) and .NET primitives and core types
-(Guid, DateTime, TimeSpan). Compatible with Fable.
+(Guid, DateTime, DateTimeOffset, DateOnly, TimeOnly, TimeSpan, decimal). Compatible with Fable.
 
 ## Usage
 

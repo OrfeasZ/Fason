@@ -20,10 +20,14 @@ type BasicType =
     | UInt64
     | Single
     | Double
+    | Decimal
     | String
     | Guid
     | DateTime
     | TimeSpan
+    | DateOnly
+    | TimeOnly
+    | DateTimeOffset
     | Unit
 
     member this.typeName: string<typeName> =
@@ -40,10 +44,14 @@ type BasicType =
         | UInt64 -> %"uint64"
         | Single -> %"single"
         | Double -> %"double"
+        | Decimal -> %"decimal"
         | String -> %"string"
         | Guid -> %"System.Guid"
         | DateTime -> %"System.DateTime"
         | TimeSpan -> %"System.TimeSpan"
+        | DateOnly -> %"System.DateOnly"
+        | TimeOnly -> %"System.TimeOnly"
+        | DateTimeOffset -> %"System.DateTimeOffset"
         | Unit -> %"unit"
 
 [<Measure>]
@@ -133,10 +141,14 @@ let private basicTypeMap =
           typeof<uint64>.FullName, BasicType.UInt64
           typeof<single>.FullName, BasicType.Single
           typeof<double>.FullName, BasicType.Double
+          typeof<decimal>.FullName, BasicType.Decimal
           typeof<string>.FullName, BasicType.String
           typeof<Guid>.FullName, BasicType.Guid
           typeof<DateTime>.FullName, BasicType.DateTime
           typeof<TimeSpan>.FullName, BasicType.TimeSpan
+          typeof<DateOnly>.FullName, BasicType.DateOnly
+          typeof<TimeOnly>.FullName, BasicType.TimeOnly
+          typeof<DateTimeOffset>.FullName, BasicType.DateTimeOffset
           typeof<unit>.FullName, BasicType.Unit ]
 
 let private typeToTypeName (typ: FSharpType) : string<typeName> =
