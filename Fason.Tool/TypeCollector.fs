@@ -219,12 +219,16 @@ let private mapEnum (typ: FSharpType) =
 
 /// Interfaces are not serialized themselves. Only their members' argument and return types are collected.
 let private collectInterfaceMembers genericTypeArgs (typ: FSharpType) =
-    for memb in typ.TypeDefinition.MembersFunctionsAndValues do
-        let args = memb.FullType.GenericArguments[0]
-        let returnType = memb.FullType.GenericArguments[1]
+    // Curried members have the type `a -> (b -> ... -> result)`.
+    let rec collect (t: FSharpType) =
+        if t.IsFunctionType then
+            t.GenericArguments[0] |> typeFromFsharpType genericTypeArgs |> ignore
+            collect t.GenericArguments[1]
+        else
+            t |> typeFromFsharpType genericTypeArgs |> ignore
 
-        args |> typeFromFsharpType genericTypeArgs |> ignore
-        returnType |> typeFromFsharpType genericTypeArgs |> ignore
+    for memb in typ.TypeDefinition.MembersFunctionsAndValues do
+        collect memb.FullType
 
 let private hasAttribute (attribute: Type) (entity: FSharpEntity) =
     entity.Attributes

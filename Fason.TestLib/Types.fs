@@ -163,6 +163,8 @@ module TestModule =
     type Deferred<'T>() = class end
 
     type TestActionResult = { ok: bool }
+    type TestCurriedArg = { arg: int }
+    type TestCurriedResult = { result: string }
     type TestActionError = { reason: string }
 
     /// Only reachable through the interface, whose members' types are collected.
@@ -170,6 +172,9 @@ module TestModule =
     type TestActions =
         abstract member Ping: id: int -> Deferred<TestActionResult list>
         abstract member Pong: unit -> Async<Result<TestActionResult, TestActionError>>
+
+        abstract member Curried:
+            first: TestActionResult -> second: TestCurriedArg -> System.Threading.Tasks.Task<TestCurriedResult>
 
     type TestStrings =
         { plain: string

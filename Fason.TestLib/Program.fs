@@ -417,6 +417,9 @@ let realMain argv =
         ""
 #endif
 
+    roundTrip "curried interface member argument" ({ arg = 3 }: TestCurriedArg)
+    roundTrip "curried interface member result" ({ result = "x" }: TestCurriedResult)
+
     for typ in [ typeof<TestUnsupported>; typeof<TestDependsOnUnsupported> ] do
         let registered =
             try
