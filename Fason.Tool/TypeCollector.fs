@@ -126,6 +126,9 @@ exception UnsupportedMember of location: range * message: string
 /// A declared type that was dropped.
 exception SkippedType of FSharpType
 
+/// A type marked FasonIgnore, or one that depends on it, which is ignored without warnings.
+exception IgnoredType of FSharpType
+
 /// Declared types dropped for being unsupported and where, and why.
 let private skipped = List<FSharpType * range * string>()
 
@@ -146,8 +149,9 @@ let private reasonOf (ex: exn) =
 let private forMember (kind: string) (name: string) (location: range) (map: unit -> 'a) =
     try
         map ()
-    with ex ->
-        raise (UnsupportedMember(location, $"{kind} {name}: {reasonOf ex}"))
+    with
+    | IgnoredType _ -> reraise ()
+    | ex -> raise (UnsupportedMember(location, $"{kind} {name}: {reasonOf ex}"))
 
 let private refIds = Dictionary<SerializableType ref, int>(HashIdentity.Reference)
 
@@ -343,6 +347,11 @@ let private typeFromFsharpType (genericTypeArgs: Map<string, SerializableType re
 
     if isUnwrapped typ || isUnwrapped stripped then
         stripped.GenericArguments[0] |> handleGenericType genericTypeArgs
+    elif
+        stripped.HasTypeDefinition
+        && hasAttribute typeof<FasonIgnoreAttribute> stripped.TypeDefinition
+    then
+        raise (IgnoredType stripped)
     else
 
         let typ = stripped
@@ -427,8 +436,9 @@ let private typeFromFsharpType (genericTypeArgs: Map<string, SerializableType re
                 registered.RemoveRange(mark, registered.Count - mark)
 
                 let raised =
-                    match definition with
-                    | Some d when d.IsFSharpRecord || d.IsFSharpUnion || d.IsEnum || d.IsInterface ->
+                    match ex, definition with
+                    | IgnoredType _, _ -> IgnoredType typ
+                    | _, Some d when d.IsFSharpRecord || d.IsFSharpUnion || d.IsEnum || d.IsInterface ->
                         let location, message =
                             match ex with
                             | UnsupportedMember(location, message) -> location, message
@@ -436,7 +446,7 @@ let private typeFromFsharpType (genericTypeArgs: Map<string, SerializableType re
 
                         skipped.Add((typ, location, message))
                         SkippedType typ
-                    | _ -> ex
+                    | _, _ -> ex
 
                 failed[key] <- raised
                 raise raised
@@ -452,14 +462,17 @@ let rec private collectAll (entity: FSharpEntity) =
         || entity.GenericParameters.Count > 0
         || hasAttribute typeof<FasonUnwrapAttribute> entity
 
-    if not skipped then
-        try
-            entity.AsType() |> typeFromFsharpType Map.empty |> ignore
-        with _ ->
-            ()
+    if hasAttribute typeof<FasonIgnoreAttribute> entity then
+        ()
+    else
+        if not skipped then
+            try
+                entity.AsType() |> typeFromFsharpType Map.empty |> ignore
+            with _ ->
+                ()
 
-    for child in entity.NestedEntities do
-        collectAll child
+        for child in entity.NestedEntities do
+            collectAll child
 
 /// Collects the entities carrying the FasonSerializable attribute, together with
 /// everything nested in them.

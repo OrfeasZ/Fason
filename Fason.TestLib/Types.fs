@@ -294,6 +294,13 @@ module TestModule =
     /// Gets no codec either, since it depends on TestUnsupported.
     type TestDependsOnUnsupported = { inner: TestUnsupported; ok: bool }
 
+    /// Gets no codec and no warning.
+    [<FasonIgnore>]
+    type TestIgnored = { v: int }
+
+    /// Gets no codec either, since it depends on TestIgnored, and no warning.
+    type TestDependsOnIgnored = { inner: TestIgnored; ok: bool }
+
 module TestModule2 =
     type TestModule.TestUnion with
         member self.otherName = self.ToString()

@@ -20,6 +20,11 @@ type FasonSerializableAttribute() =
 type FasonUnwrapAttribute() =
     inherit Attribute()
 
+/// Marks a type that should get no encoder or decoder. Types that depend on it get none
+/// either, and neither is reported as unsupported.
+type FasonIgnoreAttribute() =
+    inherit Attribute()
+
 #nowarn "42"
 
 [<AutoOpen>]

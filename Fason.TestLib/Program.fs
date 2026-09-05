@@ -496,7 +496,11 @@ let realMain argv =
     roundTrip "curried interface member argument" ({ arg = 3 }: TestCurriedArg)
     roundTrip "curried interface member result" ({ result = "x" }: TestCurriedResult)
 
-    for typ in [ typeof<TestUnsupported>; typeof<TestDependsOnUnsupported> ] do
+    for typ in
+        [ typeof<TestUnsupported>
+          typeof<TestDependsOnUnsupported>
+          typeof<TestIgnored>
+          typeof<TestDependsOnIgnored> ] do
         let registered =
             try
                 Json.codecFor typ |> ignore

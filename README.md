@@ -41,6 +41,46 @@ let value = Json.deserialize<MyRecord> json
 let jsonObj = Json.serializeObj typeof<MyRecord> (box value)
 ```
 
+## Attributes
+
+Fason looks for three attributes, all in the `Fason` namespace:
+
+| Attribute           | Description                                                                                                                                                                                                                      |
+|---------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `FasonSerializable` | Marks a type to generate encoders / decoders for, together with every type it depends on. On a module, it applies to everything inside. On an interface, codecs are generated for the parameter and return types of its members. |
+| `FasonUnwrap`       | Generates encoders / decoders for the type arguments of a type instead of itself. `Task<'T>`, `ValueTask<'T>` and `Async<'T>` are treated this way by default.                                                                   |
+| `FasonIgnore`       | Marks a type that is skipped (no encoders / decoders are generated for it). Types that depend on it get none either.                                                                                                             |
+
+For example, this makes Fason generate codecs for `Request`, `Response` and `ServerStatus`, but not for `Session`,
+`Audit` or `Deferred<'T>`:
+
+```fsharp
+namespace MyNamespace
+
+open System.Threading.Tasks
+open Fason
+
+type ServerStatus = { ok: bool }
+
+[<FasonSerializable>]
+module Api =
+    type Request = { id: int }
+    type Response = { ok: bool }
+
+    [<FasonIgnore>]
+    type Session = { token: string }
+
+    type Audit = { session: Session; at: System.DateTime }
+
+    [<FasonUnwrap>]
+    type Deferred<'T>(compute: unit -> 'T) =
+        member _.Value = compute ()
+
+    type IApi =
+        abstract member Send: request: Request -> Task<Response>
+        abstract member Status: unit -> Deferred<ServerStatus>
+```
+
 ## Options
 
 The Fason tool has the following options:
