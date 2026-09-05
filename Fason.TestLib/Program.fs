@@ -171,6 +171,34 @@ let realMain argv =
     expectJson "decimal json" ({ d = 1.5M }: TestDecimal) """{"d":"1.5"}"""
     check "decimal reads a bare number" (Json.deserialize<TestDecimal> """{"d":2.25}""" = { d = 2.25M }) ""
 
+    let seqAndValueOption =
+        { items =
+            seq {
+                1
+                2
+            }
+          records = Seq.ofList [ { a = 1; b = "x" } ]
+          maybe = ValueSome 3
+          missing = ValueNone
+          nested = [ ValueSome 1; ValueNone ] }
+
+    expectJson
+        "seq and voption json"
+        seqAndValueOption
+        """{"items":[1,2],"records":[{"a":1,"b":"x"}],"maybe":3,"nested":[1,null]}"""
+
+    let parsedSeq =
+        Json.deserialize<TestSeqAndValueOption> (Json.serialize seqAndValueOption)
+
+    check
+        "seq and voption round trip"
+        (List.ofSeq parsedSeq.items = [ 1; 2 ]
+         && List.ofSeq parsedSeq.records = [ { a = 1; b = "x" } ]
+         && parsedSeq.maybe = ValueSome 3
+         && parsedSeq.missing = ValueNone
+         && parsedSeq.nested = [ ValueSome 1; ValueNone ])
+        $"parsed: %A{parsedSeq}"
+
     let dateOnly =
         { day = DateOnly(2026, 9, 5)
           days = [ DateOnly(1999, 12, 31); DateOnly(2000, 1, 1) ] }
@@ -386,7 +414,7 @@ let realMain argv =
     thothCompatible "thoth: tuples nested" testTuplesNested
     thothCompatible "thoth: strings" testStrings
 
-    expectFailure "type outside the model fails" (fun () -> Json.serialize [ Some 1 ] |> ignore)
+    expectFailure "type outside the model fails" (fun () -> Json.serialize [ 1.5M ] |> ignore)
 
     check
         "unknown fields are skipped and whitespace is allowed"

@@ -184,6 +184,13 @@ module TestModule =
 
     type TestDate = { at: DateTime }
 
+    type TestSeqAndValueOption =
+        { items: seq<int>
+          records: seq<TestRecordSimple>
+          maybe: int voption
+          missing: string voption
+          nested: int voption list }
+
     type TestDateOnly = { day: DateOnly; days: DateOnly list }
 
     type TestDecimal = { d: decimal }

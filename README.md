@@ -1,8 +1,8 @@
 # Fason
 
 An F# code generator that generates optimized (and Thoth-compatible) JSON encoders and decoders for F# types, without
-using reflection. Only supports F# types (e.g. records, tuples, DUs, collections) and .NET primitives and core types
-(Guid, DateTime, DateTimeOffset, DateOnly, TimeOnly, TimeSpan, decimal). Compatible with Fable.
+using reflection. Supports F# types (records, unions, tuples, collections, etc.) and .NET primitives and core types.
+See [Supported types](#supported-types) below for the full list. Compatible with Fable.
 
 ## Usage
 
@@ -80,6 +80,24 @@ module Api =
         abstract member Send: request: Request -> Task<Response>
         abstract member Status: unit -> Deferred<ServerStatus>
 ```
+
+## Supported types
+
+Fason supports generating encoders / decoders for these types, and for any combination of them:
+
+| Kind             | Types                                                                                                                                               | JSON                                                                                                      |
+|------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------|
+| Numbers          | `int8`, `int16`, `int32`, `int64`, `uint8`, `uint16`, `uint32`, `uint64`, `single`, `double`, `decimal`                                             | A number. `int64`, `uint64` and `decimal` are quoted, so JavaScript doesn't lose precision.               |
+| Other primitives | `bool`, `char`, `string`, `unit`                                                                                                                    | `unit` is `null`.                                                                                         |
+| Core types       | `Guid`, `DateTime`, `DateTimeOffset`, `DateOnly`, `TimeOnly`, `TimeSpan`                                                                            | Encoded as strings. Dates and times in ISO 8601, `TimeSpan` its default format.                           |
+| Records          | Records, anonymous records, generic records.                                                                                                        | Fields that are `None` or `ValueNone` are omitted.                                                        |
+| Unions           | Discriminated unions, generic unions, `Result<'T, 'TError>`                                                                                         | The case name as a string, or an array of the case name string followed by its fields.                    |
+| Enums            | Enums over any of the supported integer types                                                                                                       | The underlying number. Reading also accepts the name of the value as a string.                            |
+| Tuples           | Tuples of any arity                                                                                                                                 | Encoded as an array.                                                                                      |
+| Collections      | `'T array`, `'T list`, `'T seq`, `Set<'T>`, `Map<'K, 'V>`                                                                                           | Encoded as an array. Maps with `string` or `Guid` keys are objects, other maps are arrays of pair arrays. |
+| Options          | `'T option`, `'T voption`                                                                                                                           | The value, or `null`.                                                                                     |
+| Units of measure | Any supported type with a unit of measure, for example `float<kg>` or `string<userId>`. For string UoMs Fason expects `FSharp.UMX` to be available. | The same as the type without the UoM.                                                                     |
+| Interfaces       | Interfaces marked `FasonSerializable` (or anywhere down the chain of something marked as such).                                                     | No codecs for the interface itself, only for the argument and return types of its member functions.       |
 
 ## Options
 

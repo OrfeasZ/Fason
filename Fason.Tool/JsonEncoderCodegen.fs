@@ -124,7 +124,12 @@ module private Emit =
     let curried (fn: string) (args: Expression list) : Expression = AppExpr(ident fn, args)
     let notExpr (expr: Expression) = curried "not" [ paren expr ]
     let boxed (expr: Expression) = curried "box" [ paren expr ]
-    let some (expr: Expression) = curried "Some" [ paren expr ]
+
+    let optionCases (isValueOption: bool) =
+        if isValueOption then
+            "ValueSome", "ValueNone"
+        else
+            "Some", "None"
 
     let stmt (expr: Expression) : Statement = OtherExpr expr
 
@@ -232,10 +237,13 @@ module JsonEncoderCodegen =
             %($"({parts})")
         | SerializableType.Array a -> %($"{name a} array")
         | SerializableType.List l -> %($"{name l} list")
+        | SerializableType.Seq s -> %($"{name s} seq")
         | SerializableType.Set s -> %($"Set<{name s}>")
         | SerializableType.Map(k, v) -> %($"Map<{name k}, {name v}>")
         | SerializableType.UnitOfMeasure uom -> %($"{name uom.baseType}<{uom.unitOfMeasure}>")
-        | SerializableType.Optional o -> %($"{name o} option")
+        | SerializableType.Optional(o, isValueOption) ->
+            let suffix = if isValueOption then "voption" else "option"
+            %($"{name o} {suffix}")
 
     /// Qualified name of a union case. When a case shares the type's name, `Type.Other`
     /// resolves `Type` to that case, so the cases go through the enclosing module instead.
@@ -281,8 +289,9 @@ module JsonEncoderCodegen =
             | SerializableType.UnitOfMeasure uom -> stripUom uom.baseType
             | SerializableType.Array a -> ref (SerializableType.Array(stripUom a))
             | SerializableType.List l -> ref (SerializableType.List(stripUom l))
+            | SerializableType.Seq s -> ref (SerializableType.Seq(stripUom s))
             | SerializableType.Set s -> ref (SerializableType.Set(stripUom s))
-            | SerializableType.Optional o -> ref (SerializableType.Optional(stripUom o))
+            | SerializableType.Optional(o, isValueOption) -> ref (SerializableType.Optional(stripUom o, isValueOption))
             | SerializableType.Map(k, v) -> ref (SerializableType.Map(stripUom k, stripUom v))
             | SerializableType.Tuple t ->
                 ref (
@@ -405,7 +414,9 @@ module JsonEncoderCodegen =
                       | None -> [ Code(stmt (ifThen (ident "needsComma") (writer "WritePlain" [ str "," ]))) ]
 
                   match field.fieldType.Value with
-                  | SerializableType.Optional inner ->
+                  | SerializableType.Optional(inner, isValueOption) ->
+                      let someCase, noneCase = optionCases isValueOption
+
                       let written =
                           [ yield! separator
                             Plain name
@@ -417,7 +428,7 @@ module JsonEncoderCodegen =
                           stmt (
                               matchOn
                                   (ident $"value.{codeName field.name}")
-                                  [ patCase "Some" [ "v" ], block (writes written); patNamed "None", unit ]
+                                  [ patCase someCase [ "v" ], block (writes written); patNamed noneCase, unit ]
                           )
                       )
 
@@ -536,14 +547,17 @@ module JsonEncoderCodegen =
             | SerializableType.Tuple t -> tupleSerializer t
             | SerializableType.Array a -> arraySerializer a
             | SerializableType.List l -> listSerializer l
+            | SerializableType.Seq s -> arraySerializer s
             | SerializableType.Set s ->
                 foldSerializer "Set.fold" [ "first"; "item" ] [ serialize s (ident "item") ] "[" "]"
             | SerializableType.Map(k, v) -> mapSerializer k v
-            | SerializableType.Optional o ->
+            | SerializableType.Optional(o, isValueOption) ->
+                let someCase, noneCase = optionCases isValueOption
+
                 matchOn
                     (ident "value")
-                    [ patCase "Some" [ "v" ], block (writes [ serialize o (ident "v") ])
-                      patNamed "None", writer "WritePlain" [ str "null" ] ]
+                    [ patCase someCase [ "v" ], block (writes [ serialize o (ident "v") ])
+                      patNamed noneCase, writer "WritePlain" [ str "null" ] ]
             | SerializableType.UnitOfMeasure _ -> failwith "units of measure are stripped before generation"
 
         staticMember (serializerName name) [ "value", string name; "writer", "Fason.JsonWriter" ] "unit" body
@@ -856,20 +870,27 @@ module JsonEncoderCodegen =
                     (paren (typed (list []) $"{getTypeName l} list"))
                     (set (ident "values") (infix (deserialize l) "::" (ident "values")))
                     (curried "List.rev" [ ident "values" ])
+            | SerializableType.Seq s ->
+                collection
+                    (call (typeApp "ResizeArray" [ string (getTypeName s) ]) [])
+                    (call (ident "values.Add") [ deserialize s ])
+                    (paren (upcastTo (ident "values") $"{getTypeName s} seq"))
             | SerializableType.Set s ->
                 collection
                     (paren (typed (ident "Set.empty") $"Set<{getTypeName s}>"))
                     (set (ident "values") (pipe (ident "values") (curried "Set.add" [ deserialize s ])))
                     (ident "values")
             | SerializableType.Map(k, v) -> mapDeserializer k v
-            | SerializableType.Optional o ->
+            | SerializableType.Optional(o, isValueOption) ->
+                let someCase, noneCase = optionCases isValueOption
+
                 block
                     [ stmt (reader "SkipWhitespace" [])
                       stmt (
                           ifElse
                               (eq (reader "Peek" []) (chr 'n'))
-                              (block [ stmt (reader "ReadNull" []); stmt (ident "None") ])
-                              (curried "Some" [ deserialize o ])
+                              (block [ stmt (reader "ReadNull" []); stmt (ident noneCase) ])
+                              (curried someCase [ deserialize o ])
                       ) ]
             | SerializableType.UnitOfMeasure _ -> failwith "units of measure are stripped before generation"
 
@@ -959,12 +980,14 @@ module JsonEncoderCodegen =
                       platform "setField" [ ident "o"; str field.name; converted ]
 
                   match field.fieldType.Value with
-                  | SerializableType.Optional inner ->
+                  | SerializableType.Optional(inner, isValueOption) ->
+                      let someCase, noneCase = optionCases isValueOption
+
                       stmt (
                           matchOn
                               (ident $"value.{codeName field.name}")
-                              [ patCase "Some" [ "v" ], setField (toJs inner (ident "v"))
-                                patNamed "None", unit ]
+                              [ patCase someCase [ "v" ], setField (toJs inner (ident "v"))
+                                patNamed noneCase, unit ]
                       )
                   | _ -> stmt (setField (toJs field.fieldType (ident $"value.{codeName field.name}")))
               stmt (ident "o") ]
@@ -988,8 +1011,15 @@ module JsonEncoderCodegen =
 
                   match field.fieldType.Value with
                   | SerializableType.Basic BasicType.Unit -> letValue f unit
-                  | SerializableType.Optional inner ->
-                      letValue f (ifElse (isNullish (ident f)) (ident "None") (some (fromJs inner (ident f))))
+                  | SerializableType.Optional(inner, isValueOption) ->
+                      let someCase, noneCase = optionCases isValueOption
+
+                      letValue
+                          f
+                          (ifElse
+                              (isNullish (ident f))
+                              (ident noneCase)
+                              (curried someCase [ paren (fromJs inner (ident f)) ]))
                   | _ ->
                       let missing =
                           curried "Fason.JsValue.missing" [ str field.name; str (string typeName) ]
@@ -1139,6 +1169,18 @@ module JsonEncoderCodegen =
                           (call (typeApp "Array.zeroCreate" [ string (getTypeName item) ]) [ ident "arr.Length" ])
                       stmt (forEachIndex (set (index (ident "result") (ident "i")) (fromJs item itemAt)))
                       stmt (ident "result") ]
+            | SerializableType.Seq item ->
+                block
+                    [ newList ()
+                      stmt (forEach "item" (ident "value") (addItem (toJs item (ident "item"))))
+                      stmt (boxed (ident "arr")) ],
+                block
+                    [ letValue "arr" toArray
+                      letValue
+                          "result"
+                          (call (typeApp "ResizeArray" [ string (getTypeName item) ]) [ ident "arr.Length" ])
+                      stmt (forEachIndex (call (ident "result.Add") [ paren (fromJs item itemAt) ]))
+                      stmt (paren (upcastTo (ident "result") $"{getTypeName item} seq")) ]
             | SerializableType.List item ->
                 // Walking the list by field access avoids the enumerator and the List module calls.
                 block
@@ -1252,12 +1294,17 @@ module JsonEncoderCodegen =
                           )
                           stmt (boxed (ident "arr")) ],
                     block [ letMutable "result" emptyMap; stmt pairForm; stmt (ident "result") ]
-            | SerializableType.Optional inner ->
+            | SerializableType.Optional(inner, isValueOption) ->
+                let someCase, noneCase = optionCases isValueOption
+
                 matchOn
                     (ident "value")
-                    [ patCase "Some" [ "v" ], toJs inner (ident "v")
-                      patNamed "None", ident "null" ],
-                ifElse (isNullish (ident "value")) (ident "None") (some (fromJs inner (ident "value")))
+                    [ patCase someCase [ "v" ], toJs inner (ident "v")
+                      patNamed noneCase, ident "null" ],
+                ifElse
+                    (isNullish (ident "value"))
+                    (ident noneCase)
+                    (curried someCase [ paren (fromJs inner (ident "value")) ])
             | SerializableType.UnitOfMeasure _ -> failwith "units of measure are stripped before generation"
 
         [ staticMember (toJsName name) [ "value", string name ] "obj" toBody

@@ -112,7 +112,8 @@ type SerializableType =
     | Set of SerializableType ref
     | Map of key: SerializableType ref * value: SerializableType ref
     | UnitOfMeasure of UomType
-    | Optional of SerializableType ref
+    | Seq of SerializableType ref
+    | Optional of SerializableType ref * isValueOption: bool
 
 /// Collection of all types that are serializable, that we've collected so far.
 let private types = Dictionary<FSharpType * int list, SerializableType ref>()
@@ -405,7 +406,10 @@ let private typeFromFsharpType (genericTypeArgs: Map<string, SerializableType re
                                         defaultValue = None } ] }
                     | None ->
                         match definition with
-                        | Some d when d.CompiledName = "FSharpOption`1" -> SerializableType.Optional(arg 0)
+                        | Some d when d.CompiledName = "FSharpOption`1" -> SerializableType.Optional(arg 0, false)
+                        | Some d when d.CompiledName = "FSharpValueOption`1" -> SerializableType.Optional(arg 0, true)
+                        | Some d when d.TryFullName = Some "System.Collections.Generic.IEnumerable`1" ->
+                            SerializableType.Seq(arg 0)
                         | Some d when d.CompiledName = "FSharpList`1" -> SerializableType.List(arg 0)
                         | Some d when d.CompiledName = "FSharpSet`1" -> SerializableType.Set(arg 0)
                         | Some d when d.CompiledName = "FSharpMap`2" -> SerializableType.Map(arg 0, arg 1)
